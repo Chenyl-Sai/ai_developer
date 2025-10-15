@@ -1,0 +1,82 @@
+"""
+Agent管理器
+"""
+import uuid
+from typing import Optional
+from dotenv import load_dotenv
+
+from ..models.state import AgentState
+from ..utils.stream_processor import StreamProcessor
+from .re_act_agent import ReActAgent, SubAgentState
+from ..constants.prompt import get_system_prompt
+from ..utils.logger import agent_logger
+from ..utils.tool import get_available_tools
+
+
+class AIProgrammingAssistant:
+    """AI编程助手主类"""
+
+    def __init__(self, working_directory: str = "."):
+        # 加载环境变量
+        load_dotenv()
+
+        # 初始化状态
+        self.state = AgentState(working_directory=working_directory)
+
+        # 延迟初始化Agent
+        self.system_prompt = None
+        self.main_agent: ReActAgent | None = None
+
+    async def _initialize_agent(self):
+        """延迟初始化SubAgentGraph"""
+        if self.main_agent is None:
+            # 获取系统提示词
+            if self.system_prompt is None:
+                self.system_prompt = await get_system_prompt()
+
+            self.main_agent = ReActAgent(
+                system_prompt=self.system_prompt,
+                tools=await get_available_tools(),
+                context={
+                    "agent_type": "main",
+                    "working_directory": self.state.working_directory
+                }
+            )
+
+    async def process_input_stream(self, user_input: str, thread_id: Optional[str] = None, resume:bool = False):
+        """流式处理用户输入"""
+        try:
+            # 确保SubAgentGraph已初始化
+            await self._initialize_agent()
+
+            # 构建配置参数
+            config = {
+                "configurable": {
+                    "thread_id": thread_id,
+                    "agent_id": "main_agent",
+                    "resume": resume,
+                }
+            }
+
+            # 记录模型调用
+            agent_logger.log_model_call("main_agent", self.main_agent.model_name, len(user_input))
+
+            # 使用真正的流式输出，传递thread_id配置
+            async for chunk in StreamProcessor.process_sub_agent_stream(
+                self.main_agent.run_stream(user_input, config=config),
+                agent_name="main_agent"
+            ):
+                yield chunk
+
+
+        except Exception as e:
+            error_msg = f"处理过程中出现错误: {str(e)}"
+            agent_logger.log_agent_error("main_agent", error_msg, e, {
+                "user_input": user_input,
+                "stage": "agent_processing"
+            })
+            yield {"type": "error", "error": error_msg}
+
+    def reset_conversation(self):
+        """重置对话"""
+        self.state = AgentState(working_directory=self.state.working_directory)
