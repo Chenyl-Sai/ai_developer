@@ -112,12 +112,12 @@ class PermissionUI:
         text = ""
         if tool_args:
             for key, value in tool_args.items():
-                text += f"  {key} : {value}\n"
+                text += f" {key} : {value}\n"
 
         result = []
         result.append(("class:permission.title", f" Execute tool\n\n"))
-        result.append(("", f"   Tool name:{tool_name}\n"))
-        result.append(("", f"   Tool args:{text}"))
+        result.append(("", f"   Tool name: {tool_name}\n"))
+        result.append(("", f"   Tool args: {text}"))
         result.append(("", "\n\n"))
         result.append(("", f" Do you want to proceed\n"))
         options = [

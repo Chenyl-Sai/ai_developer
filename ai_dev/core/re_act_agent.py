@@ -256,8 +256,6 @@ class ReActAgent:
 
     async def _execute_tools_node(self, state: SubAgentState):
         """异步执行工具节点 - 智能并行执行"""
-        tool_results = []
-
         # 分类工具调用
         parallelizable_tasks = []
         sequential_tools = []
@@ -290,18 +288,15 @@ class ReActAgent:
                         content=f"工具执行失败: {str(result)}",
                         tool_call_id=tool_call.get("id", "unknown")
                     )
-                    tool_results.append(error_result)
                     state.messages.append(error_result)
                 else:
                     # 正常结果
-                    tool_results.append(result)
                     state.messages.append(result)
 
         # 串行执行不可并行工具
         for tool_call, tool in sequential_tools:
             try:
                 tool_result = await tool.ainvoke(tool_call, context={"agent_id": state.agent_id})
-                tool_results.append(tool_result)
                 state.messages.append(tool_result)
             except Exception as e:
                 # 处理单个工具执行失败
@@ -310,12 +305,10 @@ class ReActAgent:
                     content=f"工具执行失败: {str(e)}",
                     tool_call_id=tool_call.get("id", "unknown")
                 )
-                tool_results.append(error_result)
                 state.messages.append(error_result)
 
         return {
             "messages": state.messages,
-            "tool_results": tool_results,
             "tool_calls": []  # 清空工具调用列表
         }
 
@@ -414,38 +407,10 @@ class ReActAgent:
                             "content": "LLM回答完成",
                         }
 
-                        # 处理工具调用
-                        if "tool_calls" in update_dict and update_dict["tool_calls"]:
-                            for tool_call in update_dict["tool_calls"]:
-                                tool_name = tool_call.get("name")
-                                tool_args = tool_call.get("args", {})
-                                tool_id = tool_call.get("id", f"tool_call_{state.current_iteration}")
-
-                                # 记录工具调用
-                                agent_logger.log_tool_call(state.agent_id, tool_name, tool_args)
-
-                                # 产生工具调用流输出
-                                yield {
-                                    "type": "tool_call",
-                                    "tool_name": tool_name,
-                                    "tool_args": tool_args,
-                                    "tool_id": tool_id
-                                }
-
                     # 处理execute_tools节点的输出
                     elif node_name == "execute_tools":
-                        # execute_tools节点会更新tool_results和messages
-                        if "messages" in update_dict:
-                            for message in update_dict["messages"]:
-                                if isinstance(message, ToolMessage):
-                                    # 解析工具结果消息
-                                    tool_call_id = getattr(message, 'tool_call_id', 'unknown')
-                                    tool_name = tool_call_id.split('_')[0] if '_' in tool_call_id else tool_call_id
-                                    yield {
-                                        "type": "tool_result",
-                                        "tool_name": tool_name,
-                                        "result": message.content
-                                    }
+                        # 自定义处理了
+                        pass
 
                     # 处理interrupt节点的输出
                     elif node_name == "__interrupt__":
@@ -467,7 +432,17 @@ class ReActAgent:
                         "tool_name": chunk.get("tool_name"),
                         "tool_args": chunk.get("tool_args", {}),
                         "title": chunk.get("title", ""),
-                        "message": chunk.get("message", "")
+                        "message": chunk.get("message", ""),
+                        "context": chunk.get("context", {}),
+                    }
+                # 处理工具执行完成的消息
+                elif isinstance(chunk, dict) and chunk.get("type") == "tool_process":
+                    yield {
+                        "type": "tool_process",
+                        "tool_name": chunk.get("tool_name"),
+                        "status": chunk.get("status", "progress"),
+                        "message": chunk.get("message", ""),
+                        "context": chunk.get("context", {})
                     }
                 # 处理工具执行完成的消息
                 elif isinstance(chunk, dict) and chunk.get("type") == "tool_complete":
@@ -476,7 +451,8 @@ class ReActAgent:
                         "tool_name": chunk.get("tool_name"),
                         "status": chunk.get("status", "success"),
                         "message": chunk.get("message", ""),
-                        "result": chunk.get("result")
+                        "result": chunk.get("result"),
+                        "context": chunk.get("context", {}),
                     }
                 # 注意：权限中断消息现在通过 updates 流模式的 __interrupt__ 节点处理，这里不再重复处理
                 # 其他自定义输出

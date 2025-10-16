@@ -1,7 +1,6 @@
 """
 Agent管理器
 """
-import uuid
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -11,6 +10,7 @@ from .re_act_agent import ReActAgent, SubAgentState
 from ..constants.prompt import get_system_prompt
 from ..utils.logger import agent_logger
 from ..utils.tool import get_available_tools
+from ai_dev.constants.product import MAIN_AGENT_NAME
 
 
 class AIProgrammingAssistant:
@@ -53,25 +53,26 @@ class AIProgrammingAssistant:
             config = {
                 "configurable": {
                     "thread_id": thread_id,
-                    "agent_id": "main_agent",
-                    "resume": resume,
-                }
+                    "agent_id": MAIN_AGENT_NAME,
+                    "resume": resume
+                },
+                "recursion_limit": 1000
             }
 
             # 记录模型调用
-            agent_logger.log_model_call("main_agent", self.main_agent.model_name, len(user_input))
+            agent_logger.log_model_call(MAIN_AGENT_NAME, self.main_agent.model_name, len(user_input))
 
             # 使用真正的流式输出，传递thread_id配置
             async for chunk in StreamProcessor.process_sub_agent_stream(
                 self.main_agent.run_stream(user_input, config=config),
-                agent_name="main_agent"
+                agent_name=MAIN_AGENT_NAME
             ):
                 yield chunk
 
 
         except Exception as e:
             error_msg = f"处理过程中出现错误: {str(e)}"
-            agent_logger.log_agent_error("main_agent", error_msg, e, {
+            agent_logger.log_agent_error(MAIN_AGENT_NAME, error_msg, e, {
                 "user_input": user_input,
                 "stage": "agent_processing"
             })

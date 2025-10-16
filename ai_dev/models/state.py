@@ -16,9 +16,6 @@ class AgentState(BaseModel):
     # 当前用户输入
     user_input: str = ""
 
-    # 工具执行结果
-    tool_results: List[ToolMessage] = Field(default_factory=list)
-
     # 系统状态
     working_directory: str = "."
     environment_info: Dict[str, Any] = Field(default_factory=dict)

@@ -102,13 +102,15 @@ class StreamTool(BaseTool):
         writer = get_stream_writer()
 
         # 阶段1: 开始执行
-        writer({
-            "type": "tool_start",
-            "tool_name": self.name,
-            "tool_args": kwargs,
-            "title": f"<b>{self.show_name}</b>({self._format_args(kwargs)})",
-            "message": "Doing..."
-        })
+        if self._send_tool_start_event():
+            writer({
+                "type": "tool_start",
+                "tool_name": self.name,
+                "tool_args": kwargs,
+                "title": f"<b>{self.show_name}</b>({self._format_args(kwargs)})",
+                "message": "Doing...",
+                "context": kwargs.get("context", {})
+            })
 
         try:
             # 执行工具逻辑 - 支持生成器返回
@@ -121,7 +123,8 @@ class StreamTool(BaseTool):
                         "type": "tool_progress",
                         "tool_name": self.name,
                         "message": result.get("show_message", ""),
-                        "status": "progress"
+                        "status": "progress",
+                        "context": kwargs.get("context", {})
                     })
                 elif result["type"] == "result":
                     # 最终结果
@@ -132,7 +135,8 @@ class StreamTool(BaseTool):
                         "tool_name": self.name,
                         "message": f"{self._get_success_message(llm_result)}",
                         "status": "success",
-                        "result": llm_result
+                        "result": llm_result,
+                        "context": kwargs.get("context", {})
                     })
 
             return llm_result
@@ -144,10 +148,14 @@ class StreamTool(BaseTool):
                 "tool_name": self.name,
                 "message": f"{str(e)}",
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
+                "context": kwargs.get("context", {})
             })
-            # 仍然返回错误信息给LLM，但不抛出异常
-            return f"Error: {str(e)}"
+            raise e
+
+    def _send_tool_start_event(self):
+        """"是否发送工具开始执行事件"""
+        return True
 
     def _execute_tool(self, **kwargs) -> Any:
         """

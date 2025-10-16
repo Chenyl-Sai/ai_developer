@@ -1,35 +1,51 @@
 from prompt_toolkit.formatted_text import FormattedText
 
 import ast
+from ai_dev.constants.product import MAIN_AGENT_NAME
+from ai_dev.utils.todo import get_todos, TodoItemStorage
 
 
-async def render_tool_result(chunk: dict) -> list[tuple[str, str]]:
+async def process_tool_result(chunk: dict) -> list[tuple]:
     """渲染工具执行结果
 
     Args:
         chunk (dict): 流式输出的工具执行结果消息，包含tool_name、message、status、result、error
 
     Returns:
-        list[tuples[str, str]]: 多行渲染文本，每一行是一个tuple，包含两个元素(kind, message)
+        list[tuples[str, str, str]]: 多行渲染文本，每一行是一个tuple，包含两个元素(kind, message)
     """
     result = []
     message = chunk.get("message")
     status = chunk.get("status")
     if status == "error":
         error = chunk.get("error")
-        result.append(("tool_error", f"    <style color='red'>{error if error else message}</style>"))
+        result.append(("output", "tool_error", f"    <style color='red'>{error if error else message}</style>"))
     else:
         if message is not None and len(message) > 0:
-            result.append(("tool_result", f"{message}"))
+            result.append(("output", "tool_result", f"{message}"))
+        # 文件修改、写入工具
         if chunk.get("tool_name") in ["FileEditTool", "FileWriteTool"]:
-            result.append(("tool_patch", str({
+            result.append(("output", "tool_patch", str({
                 "file_path": chunk.get("result").get("absolute_path"),
                 "hunks": chunk.get("result").get("patch"),
             })))
+        # Bash命令执行
         elif chunk.get("tool_name") in ["BashExecuteTool"]:
-            result.append(("base_execute_result", str(chunk.get("result"))))
-
-        result.append(("", ""))
+            result.append(("output", "base_execute_result", str(chunk.get("result"))))
+        # 待办更新
+        elif chunk.get("tool_name") in ["TodoWriteTool"]:
+            agent_id = MAIN_AGENT_NAME
+            context = chunk.get("context", {})
+            if context and "agent_id" in context:
+                if len(context.get("agent_id")) > 0:
+                    agent_id = context.get("agent_id")
+            todos = await get_todos(agent_id)
+            # 如果全部都完成了，就不添加了
+            remains = [todo for todo in todos if todo.status != 'completed']
+            if len(remains) == 0:
+                todos = []
+            result.append(("todo", "", todos))
+        result.append(("output", "", ""))
 
     return result
 
@@ -151,6 +167,7 @@ def render_hunk(hunk: dict) -> list[tuple]:
 
 
 def format_base_execute_tool_output(str) -> FormattedText:
+    """格式化展示Bash执行结果"""
     result = []
 
     bash_execute_result = ast.literal_eval(str)
@@ -201,3 +218,41 @@ def _format_multiline_text(text, first_line_prefix="  ⎿ ", other_lines_prefix=
     result_lines = formatted_lines[:max_show_line]
     remaining_line_count = len(lines) - max_show_line
     return '\n'.join(result_lines), remaining_line_count
+
+def format_todo_list(todos: list[TodoItemStorage]) -> FormattedText:
+    """格式化展示待办列表输出"""
+    result = []
+
+    if todos and len(todos) > 0:
+
+        # 对todos排序
+        def sort_key(item):
+            status_order = {"completed": 0, "in_progress": 1, "pending": 2}
+            priority_order = {"high": 0, "medium": 1, "low": 2}
+            return (
+                status_order.get(item.status, 3),
+                item.create_at,
+                priority_order.get(item.priority, 3),
+            )
+
+        todos.sort(key=sort_key)
+
+        doing = next((todo.content for todo in todos if todo.status == 'in_progress'), None)
+        if doing:
+            result.append(("class:common.pink", f" * {doing}...\n"))
+            first_pending = True
+            for todo in todos:
+                status = todo.status
+                if status == "completed":
+                    result.append(("class:common.gray", f"  ☒ {todo.content}\n"))
+                elif status == "in_progress":
+                    result.append(("bold", f"  ☐ {todo.content}\n"))
+                elif status == "pending":
+                    if first_pending:
+                        result.append(("", f"  ☐ {todo.content}\n"))
+                        first_pending = False
+                    else:
+                        result.append(("", f"  ☐ {todo.content}\n"))
+    if len(result) == 0:
+        result.append(("", ""))
+    return FormattedText(result)

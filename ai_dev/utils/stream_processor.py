@@ -49,28 +49,6 @@ class StreamProcessor:
                     "full_response": full_response
                 }
 
-            # 处理工具调用
-            elif chunk_type == "tool_call":
-                yield {
-                    "type": "tool_call",
-                    "tool_name": chunk.get("tool_name"),
-                    "tool_args": chunk.get("tool_args", {}),
-                    "tool_id": chunk.get("tool_id", ""),
-                    **({"agent_name": agent_name} if agent_name else {})
-                }
-
-            # 处理工具结果
-            elif chunk_type == "tool_result":
-                if agent_name:
-                    agent_logger.log_tool_result(agent_name, chunk["tool_name"], chunk["result"], True)
-                yield {
-                    "type": "tool_result",
-                    "tool_name": chunk["tool_name"],
-                    "result": chunk["result"],
-                    "success": True,
-                    **({"agent_name": agent_name} if agent_name else {})
-                }
-
             # 处理工具开始执行
             elif chunk_type == "tool_start":
                 yield {
@@ -79,6 +57,18 @@ class StreamProcessor:
                     "tool_args": chunk.get("tool_args", {}),
                     "title": chunk.get("title", ""),
                     "message": chunk.get("message", ""),
+                    "context": chunk.get("context", {}),
+                    **({"agent_name": agent_name} if agent_name else {})
+                }
+
+            # 处理工具进度更新
+            elif chunk_type == "tool_progress":
+                yield {
+                    "type": "tool_progress",
+                    "tool_name": chunk.get("tool_name"),
+                    "message": chunk.get("message", ""),
+                    "status": chunk.get("status", "progress"),
+                    "context": chunk.get("context", {}),
                     **({"agent_name": agent_name} if agent_name else {})
                 }
 
@@ -90,16 +80,7 @@ class StreamProcessor:
                     "message": chunk.get("message", ""),
                     "status": chunk.get("status", "success"),
                     "result": chunk.get("result"),
-                    **({"agent_name": agent_name} if agent_name else {})
-                }
-
-            # 处理工具进度更新
-            elif chunk_type == "tool_progress":
-                yield {
-                    "type": "tool_progress",
-                    "tool_name": chunk.get("tool_name"),
-                    "message": chunk.get("message", ""),
-                    "status": chunk.get("status", "progress"),
+                    "context": chunk.get("context", {}),
                     **({"agent_name": agent_name} if agent_name else {})
                 }
 

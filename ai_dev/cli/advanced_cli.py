@@ -22,8 +22,8 @@ from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.keys import Keys
 
 from ai_dev.components.scrollable_formatted_text_control import ScrollableFormattedTextControl
-from ai_dev.utils.render import render_tool_result, format_ai_output, format_patch_output, \
-    format_base_execute_tool_output
+from ai_dev.utils.render import process_tool_result, format_ai_output, format_patch_output, \
+    format_base_execute_tool_output, format_todo_list
 from ..core.assistant import AIProgrammingAssistant
 from ..core.global_state import GlobalState
 from ..core.config_manager import ConfigManager
@@ -34,6 +34,7 @@ from ..commands.agents import AgentsCommand
 from ..commands.help import HelpCommand
 from ..utils.logger import agent_logger
 from ..components.output_capture import OutputCapture
+from ai_dev.constants.product import MAIN_AGENT_NAME
 
 class AdvancedCLI:
     """基于prompt_toolkit的高级CLI"""
@@ -57,14 +58,24 @@ class AdvancedCLI:
             multiline=False
         )
         # 权限选择展示内容及行数控制
+        self.show_choice: bool = False
         self.choice_content: FormattedText | None = None
         self.choice_options: list = []
         self.current_choice_index: int = 0
         self.actual_choice_line_count: int = 0
+        self.choice_control = None
+
+        # 待办展示内容
+        self.todo_control = None
+        self.todo_content: list = []
+        self.show_todo: bool = False
 
         # 布局组件
         self.output_window = None
+        self.todo_window = None
+        self.up_separate_window = Window(height=1, char='─', style='class:separator')
         self.input_window = None
+        self.down_separate_window = Window(height=1, char='─', style='class:separator')
         self.choice_window = None
 
         # 输出处理定时器
@@ -94,9 +105,6 @@ class AdvancedCLI:
                 BeforeInput("> ", style="class:user")
             ]
         )
-
-        # 选择控制
-        self.choice_control = None
 
     def _setup_keybindings(self):
         """设置按键绑定"""
@@ -251,6 +259,19 @@ class AdvancedCLI:
                 parts.append(FormattedText([("", "    " + option + "\n")]))
         return merge_formatted_text(parts)
 
+    def _get_todo_text(self):
+        return format_todo_list(self.todo_content)
+
+    def set_todo_list(self, todos: list):
+        if todos and len(todos) > 0:
+            self.todo_content = todos
+            self.create_todo_window()
+            self.show_todo = True
+        else:
+            self.todo_content = []
+            self.show_todo = False
+        self.re_construct_layout()
+
     def add_output(self, kind: str, text: str, append: bool = False):
         """添加输出行"""
         if append and self.output_lines and self.output_lines[-1][0] == kind:
@@ -344,6 +365,17 @@ class AdvancedCLI:
         )
         return self.choice_window
 
+    def create_todo_window(self):
+        # 待办列表控制器
+        self.todo_control = ScrollableFormattedTextControl(
+            self._get_todo_text,
+            focusable=True,
+        )
+        self.todo_window = Window(
+            content=self.todo_control
+        )
+        return self.todo_window
+
     def create_layout(self):
         """创建布局"""
         return Layout(
@@ -351,11 +383,11 @@ class AdvancedCLI:
                 # 输出区域（自动扩展）
                 self.get_output_window(),
                 # 分隔线
-                Window(height=1, char='─', style='class:separator'),
+                self.up_separate_window,
                 # 输入框或选择框（固定高度）
                 self.get_input_window(),
                 # 分隔线
-                Window(height=1, char='─', style='class:separator'),
+                self.down_separate_window,
             ]),
             focused_element=self.input_window,
         )
@@ -382,7 +414,8 @@ class AdvancedCLI:
             return
 
         # 恢复输入框
-        self._restore_normal_input()
+        self.show_choice=False
+        self.re_construct_layout()
 
         # 处理选择结果
         await self._handle_interruption_recovery(choice)
@@ -430,7 +463,7 @@ class AdvancedCLI:
             self.add_output("error", "助手未初始化")
             return
 
-        agent_logger.log_agent_start("main_agent", user_input)
+        agent_logger.log_agent_start(MAIN_AGENT_NAME, user_input)
 
         full_response = ""
         has_interrupted = False
@@ -448,7 +481,7 @@ class AdvancedCLI:
 
                 elif chunk.get("type") == "error":
                     self.add_output("error", chunk["error"])
-                    agent_logger.log_agent_error("main_agent", chunk["error"], None, {
+                    agent_logger.log_agent_error(MAIN_AGENT_NAME, chunk["error"], None, {
                         "stage": "stream_processing"
                     })
 
@@ -462,7 +495,6 @@ class AdvancedCLI:
 
                 elif chunk.get("type") == "tool_start":
                     message = chunk.get("title", "调用工具")
-                    agent_logger.debug(f"Tool start title {message}")
                     self.add_output("tool_title", f"\n {message}")
 
                 elif chunk.get("type") == "tool_progress":
@@ -470,8 +502,12 @@ class AdvancedCLI:
                     self.add_output("info", f"🛠️ {message}")
 
                 elif chunk.get("type") == "tool_complete":
-                    for item in await render_tool_result(chunk):
-                        self.add_output(item[0], item[1])
+                    for item in await process_tool_result(chunk):
+                        if item[0] == 'output':
+                            self.add_output(item[1], item[2])
+                        elif item[0] == 'todo':
+                            self.set_todo_list(item[2])
+
 
                 elif chunk.get("type") == "custom":
                     content = chunk.get("content", "")
@@ -479,18 +515,18 @@ class AdvancedCLI:
 
                 elif chunk.get("type") == "complete":
                     full_response = chunk["full_response"]
-                    agent_logger.log_agent_complete("main_agent", full_response)
+                    agent_logger.log_agent_complete(MAIN_AGENT_NAME, full_response)
 
         except Exception as e:
             self.add_output("error", f"处理流时出错: {str(e)}")
-            agent_logger.log_agent_error("main_agent", str(e), e, {
+            agent_logger.log_agent_error(MAIN_AGENT_NAME, str(e), e, {
                 "user_input": user_input,
                 "stage": "stream_processing"
             })
 
         if not full_response and not has_interrupted:
             self.add_output("error", "❌ 没有生成响应")
-            agent_logger.log_no_response("main_agent", "处理了但没有生成响应")
+            agent_logger.log_no_response(MAIN_AGENT_NAME, "处理了但没有生成响应")
 
     def show_permission_request(self, choice_text: FormattedText, options: list):
         """显示权限请求选择界面"""
@@ -498,30 +534,33 @@ class AdvancedCLI:
         self.choice_content = choice_text
         self.choice_options = options
         # 每次创建独立的窗口
+        self.show_choice=True
         self.create_choice_window()
-        self._replace_input_with_choice()
-        self._setup_choice_keybindings()
+        self.re_construct_layout()
 
-
-    def _replace_input_with_choice(self):
-        """用选择窗口替换输入窗口"""
+    def re_construct_layout(self):
+        """根据状态重新构建layout内组件"""
         app = get_app()
-        app.layout.container.children[2] = self.choice_window
+        new_children =[self.output_window]
+        if self.show_todo:
+            new_children.append(self.todo_window)
+        else:
+            self.todo_window = None
+            self.todo_control = None
+        new_children.append(self.up_separate_window)
+        if self.show_choice:
+            new_children.append(self.choice_window)
+            self.input_buffer.read_only = lambda: True
+            app.key_bindings = self.choice_kb
+        else:
+            self.choice_window = None
+            self.choice_control = None
+            new_children.append(self.input_window)
+            self.input_buffer.read_only = lambda: False
+            app.key_bindings = self.normal_kb
+        new_children.append(self.down_separate_window)
+        app.layout.container.children = new_children
         app.invalidate()
-        self.input_buffer.read_only = lambda: True
-
-    def _restore_normal_input(self):
-        """恢复正常输入模式"""
-        app = get_app()
-        app.layout.container.children[2] = self.get_input_window()
-        app.invalidate()
-        self.input_buffer.read_only = lambda: False
-        app.key_bindings = self.normal_kb
-
-    def _setup_choice_keybindings(self):
-        """设置选择模式按键绑定"""
-        app = get_app()
-        app.key_bindings = self.choice_kb
 
     def print_welcome(self):
         """打印欢迎信息"""
@@ -577,6 +616,8 @@ class AdvancedCLI:
                 'common.gray': '#cccccc',
                 'common.blue': '#3366FF',
                 'common.red': '#FF6B6B',
+                'common.purple': '#8B5CF6',
+                'common.pink': '#FF1493',
 
                 'tool.patch.line_number': '#cccccc',
                 'tool.patch.line_number.removed': '#cccccc',
@@ -593,16 +634,8 @@ class AdvancedCLI:
                 # 使用真实的终端输出
                 from prompt_toolkit.output import create_output
 
-                # 获取输出窗口实际输出内容高度，用于实现自动滚动
                 def after_render(app):
-                    output_window_render_info = self.get_output_window().render_info
-                    if output_window_render_info:
-                        self.output_control.update_line_count(output_window_render_info.content_height)
-                    if self.choice_window:
-                        choice_window_render_info = self.choice_window.render_info
-                        if self.choice_control and choice_window_render_info:
-                            self.choice_control.update_line_count(choice_window_render_info.content_height)
-
+                    pass
 
                 app = Application(
                     layout=layout,

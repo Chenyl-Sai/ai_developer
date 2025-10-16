@@ -149,7 +149,8 @@ assistant: "I'm going to use the Task tool to launch the with the greeting-respo
             "configurable": {
                 "thread_id": str(uuid.uuid4()),
                 "agent_id": sub_agent_config.agent_name + str(uuid.uuid4()),
-            }
+            },
+            "recursion_limit": 1000,
         }
 
         async for chunk in StreamProcessor.process_sub_agent_stream(

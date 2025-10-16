@@ -159,6 +159,16 @@ async def set_todos(todos: list[TodoItem], agent_id: str) -> list[TodoItemStorag
         agent_logger.error(f"错误: 保存待办列表文件失败", exception=e)
         raise
 
+async def delete_todo_file_if_need(agent_id: str):
+    """清理待办缓存文件"""
+    todos = await get_todos(agent_id)
+    # 如果全部都是completed
+    remains = [todo for todo in todos if todo.status != 'completed']
+    if len(remains) == 0:
+        file_path = get_todo_file_path(agent_id)
+        if file_path.exists():
+            file_path.unlink()
+
 def get_todo_file_path(agent_id: str, for_write: bool = False):
     working_dir = GlobalState.get_working_directory()
     todo_dir = Path(working_dir) / ".ai_dev" / "todos"

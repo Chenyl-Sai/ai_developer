@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from . import StreamTool
 from pydantic import BaseModel, Field
+from ai_dev.constants.product import MAIN_AGENT_NAME
 
 
 class TodoItem(BaseModel):
@@ -118,12 +119,15 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         self._verify_input(todos)
 
         # 保存待办 - 从kwargs中获取agent_id，如果不存在则使用默认值
-        agent_id = kwargs.get("context", {}).get("agent_id", "main_agent") if "context" in kwargs else "main_agent"
+        agent_id = kwargs.get("context", {}).get("agent_id", MAIN_AGENT_NAME) if "context" in kwargs else MAIN_AGENT_NAME
 
-        from ..utils.todo import set_todos
+        from ..utils.todo import set_todos, delete_todo_file_if_need
         stored_todo_items = asyncio.run(set_todos(todos, agent_id))
 
         result_data = self._generate_summary(stored_todo_items)
+
+        # 生成响应之后，查看是否需要清理待办文件
+        asyncio.run(delete_todo_file_if_need(agent_id))
 
         yield {
             "type": "result",
@@ -182,6 +186,9 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
 
         return summary
 
+    def _send_tool_start_event(self):
+        return False
+
     def _get_success_message(self, result: str) -> str:
         """生成成功消息"""
-        return result
+        return ""
