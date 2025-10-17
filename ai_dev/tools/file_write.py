@@ -64,32 +64,22 @@ class FileWriteTool(StreamTool):
         # 写文件
         write_text_content(str(safe_path), content, enc, endings)
 
-        # 生成返回数据
-        if old_content:
-            patch = get_patch(
-                file_path=file_path,
-                file_contents=old_content,
-                old_str=old_content,
-                new_str=content
-            )
+        patch = get_patch(
+            file_path=file_path,
+            file_contents=old_content if old_content else "",
+            old_str=old_content if old_content else "",
+            new_str=content
+        )
 
-            result_data = {
-                "type": "update",
-                "file_path": str(safe_path.relative_to(GlobalState.get_working_directory())),
-                "absolute_path": str(safe_path),
-                "file_name": safe_path.name,
-                "content": content,
-                "patch": patch,
-            }
-        else:
-            result_data = {
-                "type": "create",
-                "file_path": str(safe_path.relative_to(GlobalState.get_working_directory())),
-                "absolute_path": str(safe_path),
-                "file_name": safe_path.name,
-                "content": content,
-                "patch": [],
-            }
+        # 生成返回数据
+        result_data = {
+            "type": "update" if old_content else "create",
+            "file_path": str(safe_path.relative_to(GlobalState.get_working_directory())),
+            "absolute_path": str(safe_path),
+            "file_name": safe_path.name,
+            "content": content,
+            "patch": patch,
+        }
 
         yield {
             "type": "result",
@@ -101,3 +91,11 @@ class FileWriteTool(StreamTool):
         safe_path = self._safe_join_path(kwargs.get("file_path"))
         relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
         return f"{relative_path}"
+
+    def _get_success_message(self, llm_result) -> str:
+        hunks = llm_result.get("patch")
+        total_add = 0
+        for hunk in hunks if hunks else []:
+            total_add += len(hunk["lines"])
+
+        return f"  ⎿ Wrote <bold>{total_add}</bold> lines to <bold>{llm_result.get('file_path')}</bold>"

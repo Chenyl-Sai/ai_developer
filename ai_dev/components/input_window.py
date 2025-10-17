@@ -1,30 +1,50 @@
-from ai_dev.components.scrollable_formatted_text_control import ScrollableFormattedTextControl
-from prompt_toolkit.formatted_text import HTML, FormattedText, merge_formatted_text
-from prompt_toolkit.layout import Window, BufferControl
-from ai_dev.utils.render import format_ai_output, format_patch_output, format_base_execute_tool_output
+from prompt_toolkit.layout import Dimension
 from ai_dev.components.common_window import CommonWindow
-from prompt_toolkit.layout.processors import BeforeInput
-from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.widgets import TextArea
+from wcwidth import wcwidth
+from ai_dev.utils.logger import agent_logger
+
+
+class AutoResizeTextArea(TextArea):
+    def __init__(self, min_height=1, max_height=10, **kwargs):
+        super().__init__(**kwargs)
+        self.min_height = min_height
+        self.max_height = max_height
+        self.window.height = self._dynamic_height
+
+    def _dynamic_height(self):
+        estimated_wraps = 0
+        render_info = self.window.render_info
+        if render_info:
+            width = render_info.window_width
+            lines = self.text.splitlines()
+            available_width = max(1, width - 2)
+
+            for line in lines:
+                line_width = sum((wcwidth(ch) or 0) for ch in line)
+                wraps = (line_width // available_width)
+                estimated_wraps += wraps
+
+        manual_lines = self.text.count("\n") + 1
+        total = manual_lines + estimated_wraps
+        return min(total if total > 0 else 1, 20)
 
 
 class InputWindow(CommonWindow):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
-        self.input_buffer = Buffer(
-            multiline=False
+        self.window = AutoResizeTextArea(
+            prompt="> ",
+            multiline=True,
+            wrap_lines=True,
         )
 
-        self.input_control = BufferControl(
-            buffer=self.input_buffer,
-            focusable=True,
-            input_processors=[
-                BeforeInput("> ", style="class:user")
-            ]
-        )
+    def set_buffer_editable(self, editable: bool):
+        self.window.read_only = not editable
 
-        self.window = Window(content=self.input_control, height=1)
+    def set_text(self, text):
+        self.window.text = text
 
-    def set_buffer_editable(self, buffer_editable: bool):
-        self.input_buffer.read_only = lambda: not buffer_editable
+    def get_text(self):
+        return self.window.text.strip()

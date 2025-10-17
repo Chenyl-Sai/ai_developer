@@ -2,7 +2,7 @@ import asyncio
 
 from ai_dev.components.scrollable_formatted_text_control import ScrollableFormattedTextControl
 from prompt_toolkit.formatted_text import HTML, FormattedText, merge_formatted_text
-from prompt_toolkit.layout import Window
+from prompt_toolkit.layout import Window, Dimension
 
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.render import format_ai_output, format_patch_output, format_base_execute_tool_output, format_todo_list
@@ -111,7 +111,6 @@ class OutputWindow(CommonWindow):
                     # 当前是否有Pending信息
                     pending_inputs = await GlobalState.get_user_input_queue().pop_all()
                     if pending_inputs:
-                        agent_logger.info("[compensation_pending_input_loop] effective!")
                         await self.user_pending_input_consumed(pending_inputs)
                         await self.cli.process_stream_input("\n".join(pending_inputs))
                 await asyncio.sleep(0.1)
@@ -173,14 +172,13 @@ class OutputWindow(CommonWindow):
     async def _process_user_interrupt(self, event: Event):
         """处理用户手动中断事件"""
         # 主要还是对Pending中的消息进行处理
-        input_buffer = self.cli.input_window.input_buffer
         pending_inputs = await GlobalState.get_user_input_queue().pop_all()
         if pending_inputs:
             agent_logger.info("[User interrupt]: reset user pending to input buffer")
-            input_buffer.text = "\n".join(pending_inputs)
+            self.cli.input_window.set_text("\n".join(pending_inputs))
         else:
             agent_logger.info("[User interrupt]: clear input buffer")
-            input_buffer.text = ""
+            self.cli.input_window.set_text("")
         self.refresh()
 
 

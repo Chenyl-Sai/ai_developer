@@ -80,7 +80,8 @@ class PermissionRequest:
                 "file_path": str(relative_path),
                 "file_name": file_name,
                 "content": self.tool_args.get("content", ""),
-                "display_type": "file_write"
+                "display_type": "file_write",
+                "patch_info": patch_info
             })
         elif self.tool_name == "FileEditTool":
             file_path = self.tool_args.get("file_path")

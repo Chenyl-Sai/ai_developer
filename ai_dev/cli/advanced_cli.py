@@ -107,12 +107,12 @@ class AdvancedCLI:
         @self.normal_kb.add(Keys.Enter)
         async def handle_enter(event):
             """处理回车键"""
-            text = self.input_window.input_buffer.text.strip()
+            text = self.input_window.get_text()
             if not text:
                 return
 
             # 清空输入框
-            self.input_window.input_buffer.text = ""
+            self.input_window.set_text("")
             # 重置自动滚动状态
             self.output_window.set_auto_scroll(True)
 
@@ -250,11 +250,11 @@ class AdvancedCLI:
                 # 分隔线
                 self.up_separate_window,
                 # 输入框或选择框（固定高度）
-                self.input_window.window,
+                self.input_window.window.window,
                 # 分隔线
                 self.down_separate_window,
             ]),
-            focused_element=self.input_window.window,
+            focused_element=self.input_window.window.window,
         )
 
     async def _handle_slash_command(self, user_input: str) -> bool:
@@ -379,7 +379,7 @@ class AdvancedCLI:
             app.key_bindings = self.choice_window.get_choice_key_bindings()
         # or 显示输入
         else:
-            new_children.append(self.input_window.window)
+            new_children.append(self.input_window.window.window)
             self.input_window.set_buffer_editable(True)
             app.key_bindings = self.normal_kb
         # 下分割线
@@ -387,7 +387,7 @@ class AdvancedCLI:
         app.layout.container.children = new_children
         # 如果当前不是选择，给输入库聚焦
         if not self.choice_window.need_show():
-            app.layout.focus(self.input_window.window)
+            app.layout.focus(self.input_window.window.window)
         app.invalidate()
 
     async def print_welcome(self):

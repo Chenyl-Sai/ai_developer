@@ -3,8 +3,8 @@ from typing import Any
 
 import ast
 from ai_dev.constants.product import MAIN_AGENT_NAME
-from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.todo import get_todos, TodoItemStorage
+from ai_dev.utils.logger import agent_logger
 
 
 async def process_tool_result(chunk: dict) -> list[tuple[str, Any]]:
