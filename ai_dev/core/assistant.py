@@ -43,7 +43,7 @@ class AIProgrammingAssistant:
                 }
             )
 
-    async def process_input_stream(self, user_input: str, thread_id: Optional[str] = None, resume:bool = False):
+    async def process_input_stream(self, user_input: str, thread_id: Optional[str] = None):
         """流式处理用户输入"""
         try:
             # 确保SubAgentGraph已初始化
@@ -53,8 +53,7 @@ class AIProgrammingAssistant:
             config = {
                 "configurable": {
                     "thread_id": thread_id,
-                    "agent_id": MAIN_AGENT_NAME,
-                    "resume": resume
+                    "agent_id": MAIN_AGENT_NAME
                 },
                 "recursion_limit": 1000
             }
@@ -77,6 +76,11 @@ class AIProgrammingAssistant:
                 "stage": "agent_processing"
             })
             yield {"type": "error", "error": error_msg}
+
+    async def agent_is_running(self, config) -> bool:
+        if self.main_agent:
+            return await self.main_agent.graph_is_running(config)
+        return False
 
     def reset_conversation(self):
         """重置对话"""

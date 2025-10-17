@@ -3,9 +3,11 @@
 """
 
 import os
+import queue
 from typing import Dict, Any, Optional
 from pathlib import Path
 from ..models.state import EnvironmentState
+from ai_dev.utils.collection import AsyncBatchQueue
 
 
 class GlobalState:
@@ -18,6 +20,7 @@ class GlobalState:
     _environment_state: Optional[EnvironmentState] = None
     _config_manager = None
     _cli_instance = None
+    _user_input_queue: AsyncBatchQueue = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -34,6 +37,7 @@ class GlobalState:
             git_info=None,
             system_info={}
         )
+        cls._user_input_queue = AsyncBatchQueue()
         return instance
 
     @classmethod
@@ -98,30 +102,6 @@ class GlobalState:
         """检查是否已初始化"""
         return cls._environment_state is not None
 
-
-# 全局访问器函数 - 提供更简洁的访问方式
-
-def get_working_directory() -> str:
-    """获取工作目录"""
-    return GlobalState.get_working_directory()
-
-
-def set_working_directory(path: str):
-    """设置工作目录"""
-    GlobalState.set_working_directory(path)
-
-
-def get_environment_info() -> Dict[str, Any]:
-    """获取环境信息"""
-    return GlobalState.get_environment_info()
-
-
-
-def get_config_manager():
-    """获取配置管理器"""
-    return GlobalState.get_config_manager()
-
-
-def get_cli_instance():
-    """获取CLI实例"""
-    return GlobalState.get_cli_instance()
+    @classmethod
+    def get_user_input_queue(cls) -> AsyncBatchQueue:
+        return cls._user_input_queue

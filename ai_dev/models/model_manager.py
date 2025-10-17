@@ -1,34 +1,21 @@
 """
 模型管理器 - 负责延迟模型选择和配置管理
 """
-
-import os
-from typing import Optional, Dict, Any, Union
+import asyncio
+from typing import Optional, Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_deepseek import ChatDeepSeek
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.callbacks.tracers import LoggingCallbackHandler
-from ai_dev.core.config_manager import ConfigManager
 from ai_dev.core.global_state import GlobalState
-from ai_dev.utils.logger import agent_logger
 
 
 class ModelManager:
     """模型管理器，负责延迟模型选择和配置管理"""
 
-    def __init__(self, working_directory: str = ".", default_model: Optional[str] = None, config_manager: Optional[ConfigManager] = None):
-        # 使用配置管理器 - 优先使用传入的，其次使用全局的，最后创建新的
-        if config_manager is not None:
-            self.config_manager = config_manager
-        else:
-            global_config_manager = GlobalState.get_config_manager()
-            if global_config_manager is not None:
-                self.config_manager = global_config_manager
-            else:
-                self.config_manager = ConfigManager(working_directory)
-
+    def __init__(self, default_model: Optional[str] = None):
         # 从配置中获取默认模型
-        self.default_model = default_model or self.config_manager.get_default_model()
+        self.default_model = default_model or GlobalState.get_config_manager().get_default_model()
         self._cached_models: Dict[str, BaseChatModel] = {}
 
     def get_model(self, model_name: Optional[str] = None, **kwargs) -> BaseChatModel:
@@ -76,11 +63,11 @@ class ModelManager:
     def _get_model_params(self, model_name: str) -> Dict[str, Any]:
         """获取模型参数配置"""
         # 从配置管理器中获取模型配置
-        model_config = self.config_manager.get_model_config(model_name)
+        model_config = GlobalState.get_config_manager().get_model_config(model_name)
 
         # 设置API密钥 - 只使用configManager中的配置
         provider = model_config.get("provider", "deepseek" if model_name.startswith("deepseek") else "openai")
-        api_key = self.config_manager.get_api_key(provider)
+        api_key = GlobalState.get_config_manager().get_api_key(provider)
 
         # 必须从configManager中获取API密钥
         if not api_key:
@@ -107,54 +94,3 @@ class ModelManager:
                 self._deep_update(target[key], value)
             else:
                 target[key] = value
-
-    def get_available_models(self) -> list:
-        """获取可用模型列表"""
-        return [
-            "deepseek-chat",
-            "deepseek-coder",
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-3.5-turbo"
-        ]
-
-    def validate_model(self, model_name: str) -> bool:
-        """验证模型名称是否有效"""
-        return model_name in self.get_available_models()
-
-    def get_model_info(self, model_name: str) -> Dict[str, Any]:
-        """获取模型信息"""
-        model_info = {
-            "deepseek-chat": {
-                "provider": "deepseek",
-                "description": "DeepSeek通用对话模型",
-                "context_length": 128000,
-                "supports_tools": True
-            },
-            "deepseek-coder": {
-                "provider": "deepseek",
-                "description": "DeepSeek代码专用模型",
-                "context_length": 128000,
-                "supports_tools": True
-            },
-            "gpt-4o": {
-                "provider": "openai",
-                "description": "OpenAI GPT-4o模型",
-                "context_length": 128000,
-                "supports_tools": True
-            },
-            "gpt-4o-mini": {
-                "provider": "openai",
-                "description": "OpenAI GPT-4o Mini模型",
-                "context_length": 128000,
-                "supports_tools": True
-            },
-            "gpt-3.5-turbo": {
-                "provider": "openai",
-                "description": "OpenAI GPT-3.5 Turbo模型",
-                "context_length": 16385,
-                "supports_tools": True
-            }
-        }
-
-        return model_info.get(model_name, {})

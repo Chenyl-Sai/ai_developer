@@ -18,7 +18,8 @@ class ConfigManager:
         self.working_directory = Path(working_directory).resolve()
         self.config_dir = self.working_directory / ".ai_dev"
         self.config_file = self.config_dir / "config.yaml"
-        self._config: Optional[Dict[str, Any]] = None
+        self._config = None
+        self.load_config()
 
     def load_config(self) -> Dict[str, Any]:
         """加载配置文件"""
@@ -30,12 +31,6 @@ class ConfigManager:
             "default_model": "deepseek-chat",
             "models": {
                 "deepseek-chat": {
-                    "provider": "deepseek",
-                    "temperature": 0.1,
-                    "max_tokens": None,
-                    "timeout": 60
-                },
-                "deepseek-coder": {
                     "provider": "deepseek",
                     "temperature": 0.1,
                     "max_tokens": None,
@@ -63,11 +58,6 @@ class ConfigManager:
             "api_keys": {
                 "deepseek": "",
                 "openai": ""
-            },
-            "settings": {
-                "max_tool_calls": 5,
-                "working_directory": str(self.working_directory),
-                "auto_save_conversation": True
             },
             "permissions": {
                 "allow": [
@@ -144,9 +134,8 @@ class ConfigManager:
 
     def get(self, key: str, default: Any = None) -> Any:
         """获取配置值"""
-        config = self.load_config()
         keys = key.split('.')
-        value = config
+        value = self._config
 
         for k in keys:
             if isinstance(value, dict) and k in value:
@@ -191,47 +180,3 @@ class ConfigManager:
         if env_var:
             return os.getenv(env_var, "")
         return ""
-
-    def set_api_key(self, provider: str, api_key: str):
-        """设置API密钥"""
-        self._ensure_config_loaded()
-        if "api_keys" not in self._config:
-            self._config["api_keys"] = {}
-        self._config["api_keys"][provider] = api_key
-
-    def save_config(self):
-        """保存配置到文件"""
-        self._ensure_config_loaded()
-
-        # 确保配置目录存在
-        self.config_dir.mkdir(exist_ok=True)
-
-        try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                yaml.dump(self._config, f, default_flow_style=False, allow_unicode=True, indent=2)
-        except Exception as e:
-            agent_logger.error(f"错误: 保存配置文件失败", exception=e)
-
-    def create_default_config(self):
-        """创建默认配置文件"""
-        if not self.config_file.exists():
-            self.load_config()  # 这会设置默认配置
-            self.save_config()
-            agent_logger.info(f"已创建默认配置文件: {self.config_file}")
-
-    def _ensure_config_loaded(self):
-        """确保配置已加载"""
-        if self._config is None:
-            self.load_config()
-
-    def get_working_directory(self) -> str:
-        """获取工作目录"""
-        return self.get("settings.working_directory", str(self.working_directory))
-
-    def get_max_tool_calls(self) -> int:
-        """获取最大工具调用次数"""
-        return self.get("settings.max_tool_calls", 5)
-
-    def should_auto_save_conversation(self) -> bool:
-        """是否自动保存对话"""
-        return self.get("settings.auto_save_conversation", True)

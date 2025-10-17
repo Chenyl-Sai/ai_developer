@@ -4,6 +4,8 @@ SubAgentGraph - 基于LangGraph的ReAct结构子代理图
 
 import asyncio
 from typing import Dict, Any, List, Optional, Literal
+
+from langgraph.config import get_stream_writer
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessageChunk
@@ -11,6 +13,7 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command, Interrupt, interrupt
 
 from .global_state import GlobalState
+from ..constants.product import MAIN_AGENT_NAME
 from ..models.state import AgentState
 from ai_dev.models.model_manager import ModelManager
 from ai_dev.permission.permission_manager import PermissionManager, PermissionDecision, UserPermissionChoice
@@ -22,6 +25,7 @@ class SubAgentState(AgentState):
     tool_calls: List[Dict[str, Any]] = []
     current_iteration: int = 0
     agent_id: Optional[str] = None
+    user_interrupted: bool = False
 
 
 class ReActAgent:
@@ -33,7 +37,6 @@ class ReActAgent:
             tools: List[BaseTool],
             context: Optional[Dict[str, Any]] = None,
             model: Optional[str] = None,
-            max_iterations: int = 100
     ):
         """
         初始化SubAgentGraph
@@ -43,11 +46,9 @@ class ReActAgent:
             tools: 可用的工具列表
             context: 上下文信息
             model: 使用的模型名称
-            max_iterations: 最大迭代次数
         """
         self.system_prompt = system_prompt
         self.context = context or {}
-        self.max_iterations = max_iterations
 
         # 初始化工具列表
         self.tools = tools
@@ -84,7 +85,6 @@ class ReActAgent:
         workflow.add_node("reason", self._reason_node)
         workflow.add_node("check_permissions", self._check_permissions_node)
         workflow.add_node("execute_tools", self._execute_tools_node)
-        # workflow.add_node("wait_user_input", self._wait_user_input)
 
         # 设置入口点
         workflow.set_entry_point("reason")
@@ -104,15 +104,13 @@ class ReActAgent:
             self._should_execute_tools,
             {
                 "execute": "execute_tools",
-                "skip": "reason"
+                "skip": "reason",
+                "interrupt": END
             }
         )
 
         # 工具执行完始终流转到LLM
         workflow.add_edge("execute_tools", "reason")
-
-        # 新一轮对话开始始终流转到LLM
-        # workflow.add_edge("wait_user_input", "reason")
 
         # 编译图并添加中断支持
         from langgraph.checkpoint.memory import InMemorySaver
@@ -122,27 +120,8 @@ class ReActAgent:
             checkpointer=memory
         )
 
-    async def _wait_user_input(self, state: SubAgentState):
-        """等待节点 - 一轮问答结束之后进入等待节点，等待用户下轮输入"""
-        user_input = interrupt({
-            "type": "wait_input",
-        })
-
-        # 用户输入之后添加到历史消息中
-        state.messages.append(HumanMessage(content=user_input))
-
-        return {
-            "messages": state.messages
-        }
-
     async def _reason_node(self, state: SubAgentState):
         """推理节点 - 分析用户需求并决定下一步行动"""
-        # 检查是否达到最大迭代次数
-        if state.current_iteration >= self.max_iterations:
-            return {
-                "reasoning": "达到最大迭代次数",
-                "tool_calls": [],
-            }
 
         # 如果第一条不是系统消息，拼接上系统消息
         if state.messages and state.messages[0] and not isinstance(state.messages[0], SystemMessage):
@@ -151,6 +130,11 @@ class ReActAgent:
         # 流式获取模型响应 - 使用绑定了工具的模型
         response_content = ""
         full_message = None
+
+        # 调用模型前，如果有用户pending，拼接进去
+        new_user_inputs = await self._process_user_input_pending(state)
+        if new_user_inputs:
+            state.messages.extend(new_user_inputs)
 
         # 流式处理模型响应
         async for chunk in self.bound_model.astream(state.messages):
@@ -191,7 +175,7 @@ class ReActAgent:
             tool_args = tool_call.get("args", {})
 
             # 检查权限
-            decision, request = self.permission_manager.check_permission(tool_name, tool_args,
+            decision, request = await self.permission_manager.check_permission(tool_name, tool_args,
                                                                          GlobalState.get_working_directory())
 
             if decision == PermissionDecision.ALLOW:
@@ -244,6 +228,11 @@ class ReActAgent:
                     tool_call_id=tool_call.get("id", "unknown")
                 )
                 state.messages.append(error_message)
+
+                return {
+                    "user_interrupted": True,
+                    "messages": state.messages,
+                }
 
         agent_logger.debug(
             f"[PERMISSION_DEBUG] Agent {state.agent_id} 权限检查完成: {len(allowed_tool_calls)} 个允许, {len(denied_tool_calls)} 个拒绝")
@@ -312,18 +301,34 @@ class ReActAgent:
             "tool_calls": []  # 清空工具调用列表
         }
 
+    async def _process_user_input_pending(self, state: SubAgentState) -> list[HumanMessage]:
+        """处理用户输入排队消息"""
+        user_messages = []
+        if state.agent_id == MAIN_AGENT_NAME:
+            user_inputs = await GlobalState.get_user_input_queue().pop_all()
+            if user_inputs and len(user_inputs) > 0:
+                for user_input in user_inputs:
+                    user_messages.append(HumanMessage(content=user_input))
+                # 发送待办消息被消费事件
+                writer = get_stream_writer()
+                writer({
+                    "type": "user_input_consumed",
+                    "content": user_inputs
+                })
+
+        return user_messages
+
     def _should_continue(self, state: SubAgentState) -> Literal["continue", "end"]:
         """判断是否需要继续执行工具"""
-        if state.current_iteration >= self.max_iterations:
-            return "end"
-
         if state.tool_calls:
             return "continue"
         else:
             return "end"
 
-    def _should_execute_tools(self, state: SubAgentState) -> Literal["execute", "skip"]:
+    def _should_execute_tools(self, state: SubAgentState) -> Literal["execute", "skip", "interrupt"]:
         """判断是否需要执行工具"""
+        if state.user_interrupted:
+            return "interrupt"
         if state.tool_calls:
             return "execute"
         else:
@@ -345,45 +350,42 @@ class ReActAgent:
         # 设置agent_id
         agent_id = (config.get("configurable") if config else {}).get("agent_id", None)
         thread_id = (config.get("configurable") if config else {}).get("thread_id", None)
-        resume: bool = (config.get("configurable") if config else {}).get("resume", False)
         state.agent_id = agent_id if agent_id else self._generate_agent_id()
 
         # 记录开始执行
-        agent_logger.info(f"[AGENT_START] Agent: {state.agent_id}, thread_id: {thread_id}, resume: {resume}, 输入: {user_input}")
+        agent_logger.info(f"[AGENT_START] Agent: {state.agent_id}, thread_id: {thread_id}, 输入: {user_input}")
 
         # 使用graph的流式执行 - 同时获取节点更新、消息流和自定义输出
         full_response = ""
 
-        # 鉴别本次用户输入是中断恢复还是新的问题
-        if resume:
+        stream = None
+        # 获取图当前的状态
+        status = await self.get_graph_status(config)
+        # 有中断就resume
+        if status == "Interrupted":
             stream = self.graph.astream(Command(resume=user_input), config=config,
-                                        stream_mode=["updates", "messages", "custom"])
+                                    stream_mode=["updates", "messages", "custom"])
+        elif status == "Running":
+            # 有next说明图正在运行中，将消息添加到队列中，等图在适当的位置将队列中的内容读取出来传给LLM
+            await GlobalState.get_user_input_queue().safe_put(user_input)
+            yield {
+                "type": "user_input_queued",
+                "content": user_input
+            }
         else:
+            # 没有next也没有中断，说明图运行结束了，直接重启图
             state.user_input = user_input
             # 在消息列表中拼接当前输入
             state.messages = [HumanMessage(content=user_input)]
             stream = self.graph.astream(state, config=config, stream_mode=["updates", "messages", "custom"])
-
-        async for stream_mode, chunk in stream:
-            # 处理messages流输出 - 来自reason节点的模型实时输出
-            if stream_mode == "messages":
-                # LangGraph的messages流直接提供AIMessageChunk
-                if isinstance(chunk, AIMessageChunk) and chunk.content:
-                    # 处理模型实时文本输出 - 只有当内容不为空时才处理
-                    content = chunk.content
-                    # 累积整个响应
-                    full_response += content
-                    yield {
-                        "type": "text_chunk",
-                        "content": content,
-                        "full_response": full_response
-                    }
-                elif isinstance(chunk, tuple) and len(chunk) == 2:
-                    # 处理(token, metadata)结构
-                    token, metadata = chunk
-                    if isinstance(token, AIMessageChunk) and token.content:
+        if stream:
+            async for stream_mode, chunk in stream:
+                # 处理messages流输出 - 来自reason节点的模型实时输出
+                if stream_mode == "messages":
+                    # LangGraph的messages流直接提供AIMessageChunk
+                    if isinstance(chunk, AIMessageChunk) and chunk.content:
                         # 处理模型实时文本输出 - 只有当内容不为空时才处理
-                        content = token.content
+                        content = chunk.content
                         # 累积整个响应
                         full_response += content
                         yield {
@@ -391,83 +393,76 @@ class ReActAgent:
                             "content": content,
                             "full_response": full_response
                         }
-
-
-            # 处理updates流输出 - 节点状态更新
-            elif stream_mode == "updates":
-                # chunk的结构通常是 (node_name, update_dict)
-                for node_name, update_dict in chunk.items():
-                    # 处理reason节点的输出
-                    if node_name == "reason":
-                        # 处理reason节点的最终状态更新 - 只处理工具调用，避免重复处理消息
-                        # 注意：这里不再处理messages，因为messages流已经处理了实时输出
-                        # 输出一个模型回答完成类型，用于外部处理拼接流重置
-                        yield {
-                            "type": "llm_finish",
-                            "content": "LLM回答完成",
-                        }
-
-                    # 处理execute_tools节点的输出
-                    elif node_name == "execute_tools":
-                        # 自定义处理了
-                        pass
-
-                    # 处理interrupt节点的输出
-                    elif node_name == "__interrupt__":
-                        # interrupt节点会包含权限请求信息
-                        if isinstance(update_dict, tuple) and len(update_dict) > 0 and isinstance(update_dict[0],
-                                                                                                  Interrupt):
-                            interrupt_info = update_dict[0].value
+                    elif isinstance(chunk, tuple) and len(chunk) == 2:
+                        # 处理(token, metadata)结构
+                        token, metadata = chunk
+                        if isinstance(token, AIMessageChunk) and token.content:
+                            # 处理模型实时文本输出 - 只有当内容不为空时才处理
+                            content = token.content
+                            # 累积整个响应
+                            full_response += content
                             yield {
-                                "type": interrupt_info.get("type", "wait_input"),
-                                "interrupt_info": interrupt_info
+                                "type": "text_chunk",
+                                "content": content,
+                                "full_response": full_response
                             }
 
-            # 处理custom流输出 - 来自工具的自定义流式输出
-            elif stream_mode == "custom":
-                # 处理工具开始执行的消息
-                if isinstance(chunk, dict) and chunk.get("type") == "tool_start":
-                    yield {
-                        "type": "tool_start",
-                        "tool_name": chunk.get("tool_name"),
-                        "tool_args": chunk.get("tool_args", {}),
-                        "title": chunk.get("title", ""),
-                        "message": chunk.get("message", ""),
-                        "context": chunk.get("context", {}),
-                    }
-                # 处理工具执行完成的消息
-                elif isinstance(chunk, dict) and chunk.get("type") == "tool_process":
-                    yield {
-                        "type": "tool_process",
-                        "tool_name": chunk.get("tool_name"),
-                        "status": chunk.get("status", "progress"),
-                        "message": chunk.get("message", ""),
-                        "context": chunk.get("context", {})
-                    }
-                # 处理工具执行完成的消息
-                elif isinstance(chunk, dict) and chunk.get("type") == "tool_complete":
-                    yield {
-                        "type": "tool_complete",
-                        "tool_name": chunk.get("tool_name"),
-                        "status": chunk.get("status", "success"),
-                        "message": chunk.get("message", ""),
-                        "result": chunk.get("result"),
-                        "context": chunk.get("context", {}),
-                    }
-                # 注意：权限中断消息现在通过 updates 流模式的 __interrupt__ 节点处理，这里不再重复处理
-                # 其他自定义输出
-                else:
-                    yield {
-                        "type": "custom",
-                        "content": chunk
-                    }
 
-        # 记录模型响应信息
-        agent_logger.log_model_response(state.agent_id, self.model_name, len(full_response), full_response)
+                # 处理updates流输出 - 节点状态更新
+                elif stream_mode == "updates":
+                    # chunk的结构通常是 (node_name, update_dict)
+                    for node_name, update_dict in chunk.items():
+                        # 处理reason节点的输出
+                        if node_name == "reason":
+                            # 处理reason节点的最终状态更新 - 只处理工具调用，避免重复处理消息
+                            # 注意：这里不再处理messages，因为messages流已经处理了实时输出
+                            # 输出一个模型回答完成类型，用于外部处理拼接流重置
+                            yield {
+                                "type": "llm_finish",
+                                "content": "LLM回答完成",
+                            }
 
-        # 发送完成信号
-        yield {
-            "type": "complete",
-            "full_response": full_response,
-            "agent_id": state.agent_id
-        }
+                        # 处理execute_tools节点的输出
+                        elif node_name == "execute_tools":
+                            # 自定义处理了
+                            pass
+
+                        # 处理interrupt节点的输出
+                        elif node_name == "__interrupt__":
+                            # interrupt节点会包含权限请求信息
+                            if isinstance(update_dict, tuple) and len(update_dict) > 0 and isinstance(update_dict[0],
+                                                                                                      Interrupt):
+                                interrupt_info = update_dict[0].value
+                                yield {
+                                    "type": interrupt_info.get("type", "permission_request"),
+                                    "interrupt_info": interrupt_info
+                                }
+
+                # 处理custom流输出 - 来自工具的自定义流式输出
+                elif stream_mode == "custom":
+                    # 处理工具开始执行的消息
+                    yield chunk
+
+            # 记录模型响应信息
+            agent_logger.log_model_response(state.agent_id, self.model_name, len(full_response), full_response)
+
+            # 发送完成信号
+            yield {
+                "type": "complete",
+                "full_response": full_response,
+                "agent_id": state.agent_id
+            }
+
+    async def get_graph_status(self, config) -> str:
+        """获取当前图的执行状态"""
+        if self.graph:
+            snapshot = await self.graph.aget_state(config)
+            if snapshot and snapshot.interrupts:
+                return "Interrupted"
+            elif snapshot and snapshot.next:
+                return "Running"
+        return "Finished"
+
+    async def graph_is_running(self, config) -> bool:
+        """判断指定图的状态，是否还正在运行"""
+        return (await self.get_graph_status(config)) == "Running"

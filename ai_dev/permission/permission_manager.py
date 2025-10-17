@@ -7,7 +7,6 @@ from typing import Dict, List, Optional, Tuple, Any, Set
 from enum import Enum
 from pathlib import Path
 
-from ai_dev.core.config_manager import ConfigManager
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.file import get_relative_path, get_absolute_path
 
@@ -164,15 +163,12 @@ class PermissionRequest:
 class PermissionManager:
     """权限管理器"""
 
-    def __init__(self, config_manager: Optional[ConfigManager] = None):
-        if config_manager is None:
-            config_manager = GlobalState.get_config_manager()
-        self.config_manager = config_manager
+    def __init__(self):
         self.session_cache: Dict[str, PermissionDecision] = {}
 
     def load_permission_config(self) -> Dict[str, List[str]]:
         """加载权限配置"""
-        return self.config_manager.get("permissions", {
+        return GlobalState.get_config_manager().get("permissions", {
             "allow": [
                 # "FileListTool",
                 "FileReadTool",
@@ -187,7 +183,7 @@ class PermissionManager:
             ]
         })
 
-    def check_permission(self, tool_name: str, tool_args: Dict[str, Any], working_directory: str) -> Tuple[PermissionDecision, PermissionRequest]:
+    async def check_permission(self, tool_name: str, tool_args: Dict[str, Any], working_directory: str) -> Tuple[PermissionDecision, PermissionRequest]:
         """检查工具权限
 
         Returns:

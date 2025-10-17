@@ -1,11 +1,13 @@
 from prompt_toolkit.formatted_text import FormattedText
+from typing import Any
 
 import ast
 from ai_dev.constants.product import MAIN_AGENT_NAME
+from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.todo import get_todos, TodoItemStorage
 
 
-async def process_tool_result(chunk: dict) -> list[tuple]:
+async def process_tool_result(chunk: dict) -> list[tuple[str, Any]]:
     """渲染工具执行结果
 
     Args:
@@ -19,19 +21,19 @@ async def process_tool_result(chunk: dict) -> list[tuple]:
     status = chunk.get("status")
     if status == "error":
         error = chunk.get("error")
-        result.append(("output", "tool_error", f"    <style color='red'>{error if error else message}</style>"))
+        result.append(("output_tool_error", f"    <style color='red'>{error if error else message}</style>"))
     else:
         if message is not None and len(message) > 0:
-            result.append(("output", "tool_result", f"{message}"))
+            result.append(("output_tool_result", f"{message}"))
         # 文件修改、写入工具
         if chunk.get("tool_name") in ["FileEditTool", "FileWriteTool"]:
-            result.append(("output", "tool_patch", str({
+            result.append(("output_tool_patch", str({
                 "file_path": chunk.get("result").get("absolute_path"),
                 "hunks": chunk.get("result").get("patch"),
             })))
         # Bash命令执行
         elif chunk.get("tool_name") in ["BashExecuteTool"]:
-            result.append(("output", "base_execute_result", str(chunk.get("result"))))
+            result.append(("output_base_execute_result", str(chunk.get("result"))))
         # 待办更新
         elif chunk.get("tool_name") in ["TodoWriteTool"]:
             agent_id = MAIN_AGENT_NAME
@@ -44,8 +46,7 @@ async def process_tool_result(chunk: dict) -> list[tuple]:
             remains = [todo for todo in todos if todo.status != 'completed']
             if len(remains) == 0:
                 todos = []
-            result.append(("todo", "", todos))
-        result.append(("output", "", ""))
+            result.append(("todo", todos))
 
     return result
 
@@ -200,25 +201,6 @@ def format_base_execute_tool_output(str) -> FormattedText:
     return FormattedText(result)
 
 
-def _format_multiline_text(text, first_line_prefix="  ⎿ ", other_lines_prefix="    ", max_show_line=10):
-    """格式化多行文本，为第一行和后续行添加不同前缀"""
-    if not text:
-        return ""
-
-    lines = text.strip().split('\n')
-    if not lines:
-        return ""
-
-    formatted_lines = []
-    for i, line in enumerate(lines):
-        if i == 0:  # 第一行
-            formatted_lines.append(f"{first_line_prefix}{line}")
-        else:  # 后续行
-            formatted_lines.append(f"{other_lines_prefix}{line}")
-    result_lines = formatted_lines[:max_show_line]
-    remaining_line_count = len(lines) - max_show_line
-    return '\n'.join(result_lines), remaining_line_count
-
 def format_todo_list(todos: list[TodoItemStorage]) -> FormattedText:
     """格式化展示待办列表输出"""
     result = []
@@ -253,6 +235,24 @@ def format_todo_list(todos: list[TodoItemStorage]) -> FormattedText:
                         first_pending = False
                     else:
                         result.append(("", f"  ☐ {todo.content}\n"))
-    if len(result) == 0:
-        result.append(("", ""))
     return FormattedText(result)
+
+
+def _format_multiline_text(text, first_line_prefix="  ⎿ ", other_lines_prefix="    ", max_show_line=10):
+    """格式化多行文本，为第一行和后续行添加不同前缀"""
+    if not text:
+        return ""
+
+    lines = text.strip().split('\n')
+    if not lines:
+        return ""
+
+    formatted_lines = []
+    for i, line in enumerate(lines):
+        if i == 0:  # 第一行
+            formatted_lines.append(f"{first_line_prefix}{line}")
+        else:  # 后续行
+            formatted_lines.append(f"{other_lines_prefix}{line}")
+    result_lines = formatted_lines[:max_show_line]
+    remaining_line_count = len(lines) - max_show_line
+    return '\n'.join(result_lines), remaining_line_count
