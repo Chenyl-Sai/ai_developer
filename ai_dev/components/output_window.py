@@ -9,6 +9,7 @@ from ai_dev.utils.render import format_ai_output, format_patch_output, format_ba
 from ai_dev.components.common_window import CommonWindow
 from ai_dev.utils.todo import TodoItemStorage
 from ai_dev.utils.logger import agent_logger
+from ai_dev.core.event_manager import event_manager, EventType, Event
 
 
 class OutputWindow(CommonWindow):
@@ -29,6 +30,9 @@ class OutputWindow(CommonWindow):
         )
         self.output_lock = asyncio.Lock()
         self.output_cache = []
+        self._refresh_output_cache_running = False
+        self._compensation_pending_input_running = False
+        event_manager.subscribe(EventType.INTERRUPT, self._process_user_interrupt)
 
     def set_auto_scroll(self, auto_scroll: bool):
         self.output_control.auto_scroll = auto_scroll
@@ -80,10 +84,43 @@ class OutputWindow(CommonWindow):
         async with self.output_lock:
             self.output_cache = [merge_formatted_text(sum(parts, []))]
 
-    async def update_loop(self):
-        while True:
-            await self.refresh_output_cache()
-            await asyncio.sleep(0.1)
+    async def refresh_output_cache_loop(self):
+        """定时刷新需要展示的内容缓存"""
+        self._refresh_output_cache_running = True
+        try:
+            while self._refresh_output_cache_running:
+                await self.refresh_output_cache()
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._refresh_output_cache_running = False
+
+    async def compensation_pending_input_loop(self):
+        """异步任务，定时补偿那些输入的时候判断图正在运行导致输入Pending了，但是图又运行完了，导致一致Pending的问题"""
+        self._compensation_pending_input_running = True
+        try:
+            while self._compensation_pending_input_running:
+                # 先判断一下当前图的状态
+                config = {
+                    "configurable": {
+                        "thread_id": self.cli.thread_id,
+                    }
+                }
+                if await self.cli.assistant.get_agent_state(config) == "Finished":
+                    # 当前是否有Pending信息
+                    pending_inputs = await GlobalState.get_user_input_queue().pop_all()
+                    if pending_inputs:
+                        agent_logger.info("[compensation_pending_input_loop] effective!")
+                        await self.user_pending_input_consumed(pending_inputs)
+                        await self.cli.process_stream_input("\n".join(pending_inputs))
+                await asyncio.sleep(0.1)
+
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._compensation_pending_input_running = False
+
 
     async def _get_output_part(self):
         output_parts = []
@@ -112,7 +149,6 @@ class OutputWindow(CommonWindow):
         user_input_pending_parts = []
         user_pending_inputs = await GlobalState.get_user_input_queue().peek_all()
 
-        agent_logger.debug(f"[Pending user info for draw]: {user_pending_inputs}")
         if user_pending_inputs and len(user_pending_inputs) > 0:
             # 先来俩换行
             user_input_pending_parts.append(FormattedText([('', "\n\n")]))
@@ -133,5 +169,19 @@ class OutputWindow(CommonWindow):
         if todo_parts and len(todo_parts) > 0:
             todo_parts.insert(0, FormattedText([('', "\n\n")]))
         return todo_parts
+
+    async def _process_user_interrupt(self, event: Event):
+        """处理用户手动中断事件"""
+        # 主要还是对Pending中的消息进行处理
+        input_buffer = self.cli.input_window.input_buffer
+        pending_inputs = await GlobalState.get_user_input_queue().pop_all()
+        if pending_inputs:
+            agent_logger.info("[User interrupt]: reset user pending to input buffer")
+            input_buffer.text = "\n".join(pending_inputs)
+        else:
+            agent_logger.info("[User interrupt]: clear input buffer")
+            input_buffer.text = ""
+        self.refresh()
+
 
 

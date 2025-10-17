@@ -4,6 +4,7 @@ SubAgentGraph - 基于LangGraph的ReAct结构子代理图
 
 import asyncio
 from typing import Dict, Any, List, Optional, Literal
+import time
 
 from langgraph.config import get_stream_writer
 from langgraph.graph import StateGraph, END
@@ -12,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AI
 from langchain_core.tools import BaseTool
 from langgraph.types import Command, Interrupt, interrupt
 
+from .event_manager import event_manager, Event, EventType
 from .global_state import GlobalState
 from ..constants.product import MAIN_AGENT_NAME
 from ..models.state import AgentState
@@ -67,6 +69,13 @@ class ReActAgent:
         # 构建LangGraph
         self.graph = self._build_graph()
 
+        # 订阅用户中断请求
+        self._interrupted = False
+        event_manager.subscribe(EventType.INTERRUPT, self._process_interrupted)
+
+    def _process_interrupted(self, event):
+        self._interrupted = True
+
     def _generate_agent_id(self) -> str:
         """生成唯一的agent_id"""
         import uuid
@@ -96,6 +105,7 @@ class ReActAgent:
             {
                 "continue": "check_permissions",
                 "end": END,
+                "interrupt": END
             }
         )
 
@@ -136,6 +146,12 @@ class ReActAgent:
         if new_user_inputs:
             state.messages.extend(new_user_inputs)
 
+        # 调用模型之前判断是否有Event.INTERRUPT事件，如果有则返回退出标记
+        if self._interrupted:
+            return {
+                "user_interrupted": True,
+            }
+
         # 流式处理模型响应
         async for chunk in self.bound_model.astream(state.messages):
             # 处理文本内容 - 实时产生消息流输出
@@ -147,6 +163,12 @@ class ReActAgent:
                 full_message = chunk
             else:
                 full_message = full_message + chunk
+
+            # 判断是否有Event.INTERRUPT事件，如果有则中断输出，直接退出
+            if self._interrupted:
+                return {
+                    "user_interrupted": True,
+                }
 
         return {
             "tool_calls": full_message.tool_calls,
@@ -195,23 +217,29 @@ class ReActAgent:
                 ask_requests.append((tool_call, request))
 
         # 如果有需要询问的工具调用，循环处理每个ASK请求
+        user_refuse = False
         for tool_call, request in ask_requests:
-            interrupt_info = request.get_display_info()
-            agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 向用户请求权限确认: {interrupt_info}")
+            # 如果用户没有拒绝过，则循环请求用户授权
+            if not user_refuse:
+                interrupt_info = request.get_display_info()
+                agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 向用户请求权限确认: {interrupt_info}")
 
-            # 触发中断，等待用户选择
-            user_choice = interrupt(interrupt_info)
+                # 触发中断，等待用户选择
+                user_choice = interrupt(interrupt_info)
 
-            # 映射用户选择
-            if user_choice == "1":
-                choice = UserPermissionChoice.ALLOW_ONCE
-                agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 仅本次允许")
-            elif user_choice == "2":
-                choice = UserPermissionChoice.ALLOW_SESSION
-                agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 本次会话允许")
+                # 映射用户选择
+                if user_choice == "1":
+                    choice = UserPermissionChoice.ALLOW_ONCE
+                    agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 仅本次允许")
+                elif user_choice == "2":
+                    choice = UserPermissionChoice.ALLOW_SESSION
+                    agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 本次会话允许")
+                else:
+                    choice = UserPermissionChoice.DENY
+                    agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 拒绝")
             else:
+                # 如果用户拒绝过一个，则整个流程结束，下面所有的权限请求直接标记为拒绝
                 choice = UserPermissionChoice.DENY
-                agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 拒绝")
 
             # 应用用户选择并决定是否允许执行
             is_allowed = self.permission_manager.apply_user_choice(request, choice)
@@ -220,6 +248,7 @@ class ReActAgent:
                     f"[PERMISSION_DEBUG] Agent {state.agent_id} 工具 {tool_call['name']} 用户确认允许执行")
                 allowed_tool_calls.append(tool_call)
             else:
+                user_refuse = True
                 agent_logger.debug(
                     f"[PERMISSION_DEBUG] Agent {state.agent_id} 工具 {tool_call['name']} 用户确认拒绝执行")
                 denied_tool_calls.append(tool_call)
@@ -228,18 +257,19 @@ class ReActAgent:
                     tool_call_id=tool_call.get("id", "unknown")
                 )
                 state.messages.append(error_message)
+        if user_refuse:
+            # 返回用户拒绝,结束图的执行
+            return {
+                "user_interrupted": True,
+                "messages": state.messages
+            }
 
-                return {
-                    "user_interrupted": True,
-                    "messages": state.messages,
-                }
 
         agent_logger.debug(
             f"[PERMISSION_DEBUG] Agent {state.agent_id} 权限检查完成: {len(allowed_tool_calls)} 个允许, {len(denied_tool_calls)} 个拒绝")
 
         return {
             "tool_calls": allowed_tool_calls,
-            "denied_tool_calls": denied_tool_calls,
             "messages": state.messages
         }
 
@@ -248,6 +278,22 @@ class ReActAgent:
         # 分类工具调用
         parallelizable_tasks = []
         sequential_tools = []
+
+        # 判断是否有Event.INTERRUPT事件，如果有则为所有tool_call返回用户中断执行状态，并立即返回中断执行，
+        #  虽然后续暂时不再执行模型调用，但是历史消息也必须要保证ToolCall请求返回ToolMessage
+        if self._interrupted:
+            for tool_call in state.tool_calls:
+                # 添加中断消息
+                error_message = ToolMessage(
+                    content=f"用户中断执行",
+                    tool_call_id=tool_call.get("id", "unknown")
+                )
+                state.messages.append(error_message)
+
+            return {
+                "user_interrupted": True,
+                "messages": state.messages
+            }
 
         for tool_call in state.tool_calls:
             tool = {tool.name: tool for tool in self.tools}[tool_call["name"]]
@@ -272,7 +318,6 @@ class ReActAgent:
             for (tool_call, _), result in zip(parallelizable_tasks, parallel_results):
                 if isinstance(result, Exception):
                     # 处理执行异常
-                    from langchain_core.messages import ToolMessage
                     error_result = ToolMessage(
                         content=f"工具执行失败: {str(result)}",
                         tool_call_id=tool_call.get("id", "unknown")
@@ -284,19 +329,28 @@ class ReActAgent:
 
         # 串行执行不可并行工具
         for tool_call, tool in sequential_tools:
-            try:
-                tool_result = await tool.ainvoke(tool_call, context={"agent_id": state.agent_id})
-                state.messages.append(tool_result)
-            except Exception as e:
-                # 处理单个工具执行失败
-                from langchain_core.messages import ToolMessage
-                error_result = ToolMessage(
-                    content=f"工具执行失败: {str(e)}",
+            # 判断是否有Event.INTERRUPT事件，如果有则为剩下的tool_call返回用户中断执行状态，并立即返回中断执行
+            if self._interrupted:
+                # 添加中断消息
+                error_message = ToolMessage(
+                    content=f"用户中断执行",
                     tool_call_id=tool_call.get("id", "unknown")
                 )
-                state.messages.append(error_result)
+                state.messages.append(error_message)
+            else:
+                try:
+                    tool_result = await tool.ainvoke(tool_call, context={"agent_id": state.agent_id})
+                    state.messages.append(tool_result)
+                except Exception as e:
+                    # 处理单个工具执行失败
+                    error_result = ToolMessage(
+                        content=f"工具执行失败: {str(e)}",
+                        tool_call_id=tool_call.get("id", "unknown")
+                    )
+                    state.messages.append(error_result)
 
         return {
+            "user_interrupted": self._interrupted,
             "messages": state.messages,
             "tool_calls": []  # 清空工具调用列表
         }
@@ -318,9 +372,11 @@ class ReActAgent:
 
         return user_messages
 
-    def _should_continue(self, state: SubAgentState) -> Literal["continue", "end"]:
+    def _should_continue(self, state: SubAgentState) -> Literal["continue", "end", "interrupt"]:
         """判断是否需要继续执行工具"""
-        if state.tool_calls:
+        if state.user_interrupted:
+            return "interrupt"
+        elif state.tool_calls:
             return "continue"
         else:
             return "end"
@@ -329,7 +385,7 @@ class ReActAgent:
         """判断是否需要执行工具"""
         if state.user_interrupted:
             return "interrupt"
-        if state.tool_calls:
+        elif state.tool_calls:
             return "execute"
         else:
             return "skip"
@@ -346,6 +402,8 @@ class ReActAgent:
         Yields:
             流式输出块
         """
+        # 每次运行重置中断标记
+        self._interrupted = False
         state = SubAgentState()
         # 设置agent_id
         agent_id = (config.get("configurable") if config else {}).get("agent_id", None)
@@ -466,3 +524,7 @@ class ReActAgent:
     async def graph_is_running(self, config) -> bool:
         """判断指定图的状态，是否还正在运行"""
         return (await self.get_graph_status(config)) == "Running"
+
+    async def graph_is_interrupted(self, config) -> bool:
+        """判断指定图的状态，是否中断"""
+        return (await self.get_graph_status(config)) == "Interrupted"

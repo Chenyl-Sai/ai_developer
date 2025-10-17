@@ -5,6 +5,7 @@ from prompt_toolkit.keys import Keys
 
 from ai_dev.components.common_window import CommonWindow
 from ai_dev.components.scrollable_formatted_text_control import ScrollableFormattedTextControl
+from ai_dev.core.event_manager import event_manager, Event, EventType
 from ai_dev.utils.logger import agent_logger
 
 import asyncio
@@ -94,6 +95,17 @@ class ChoiceWindow(CommonWindow):
         if choice not in ['1', '2', '3']:
             await self.cli.output_window.add_output("output_output_error", "❌ 请输入 1、2 或 3")
             return
+
+        if choice == '3':
+            import time
+            await event_manager.publish(Event(
+                event_type=EventType.INTERRUPT,
+                data={
+                    "source": "keyboard",
+                },
+                source="AdvancedCLI",
+                timestamp=time.time()
+            ))
 
         # 恢复输入框
         self.set_show_choice(False)

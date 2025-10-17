@@ -13,7 +13,7 @@ import click
 from prompt_toolkit import Application
 from prompt_toolkit.layout import Layout, HSplit, Window
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import HTML, FormattedText
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.application import get_app
 from prompt_toolkit.styles import Style
 from prompt_toolkit.keys import Keys
@@ -25,6 +25,7 @@ from ..core.assistant import AIProgrammingAssistant
 from ..core.global_state import GlobalState
 from ..core.config_manager import ConfigManager
 from ..core.interruption_manager import InterruptionManager
+from ..core.event_manager import Event, EventType, event_manager
 from ..commands import CommandRegistry
 from ..commands.clear import ClearCommand
 from ..commands.agents import AgentsCommand
@@ -77,10 +78,31 @@ class AdvancedCLI:
     def _setup_keybindings(self):
         """设置按键绑定"""
         # 正常模式按键绑定
-        @self.normal_kb.add(Keys.ControlC)
+        @self.normal_kb.add(Keys.ControlZ)
         def exit_(event):
-            """Ctrl+C 退出"""
+            """Ctrl+Z 退出"""
             event.app.exit()
+
+        # esc / Control+C中断图执行
+        @self.normal_kb.add(Keys.Escape)
+        @self.normal_kb.add(Keys.ControlC)
+        async def handle_interrupt(event):
+            """处理全局中断事件"""
+            import time
+
+            # 创建中断事件
+            interrupt_event = Event(
+                event_type=EventType.INTERRUPT,
+                data={
+                    "source": "keyboard",
+                },
+                source="AdvancedCLI",
+                timestamp=time.time()
+            )
+
+            # 发布中断事件
+            await event_manager.publish(interrupt_event)
+            agent_logger.info(f"全局中断事件已发布: {interrupt_event}")
 
         @self.normal_kb.add(Keys.Enter)
         async def handle_enter(event):
@@ -129,6 +151,7 @@ class AdvancedCLI:
 
         # 初始化中断管理器
         self.interruption_manager = InterruptionManager()
+
 
         # 初始化助手
         self.assistant = AIProgrammingAssistant(
@@ -393,14 +416,18 @@ class AdvancedCLI:
     async def run_interactive_stream(self):
         """运行流式交互式模式"""
 
+        # 启动事件管理器
+        await event_manager.start()
+
         # 启动输出捕获
         self.output_capture.start()
 
         # 启动输出处理循环
         output_task = asyncio.create_task(self._output_processing_loop())
-
         # 启动输出面板缓存刷新
-        asyncio.create_task(self.output_window.update_loop())
+        refresh_output_cache_task = asyncio.create_task(self.output_window.refresh_output_cache_loop())
+        # 补偿Pending消息消费循环
+        compensation_pending_task = asyncio.create_task(self.output_window.compensation_pending_input_loop())
 
         try:
 
@@ -479,11 +506,26 @@ class AdvancedCLI:
             agent_logger.error(f"[Start] 运行异常: {e}", exception=e)
             raise
         finally:
+            # 停止事件管理器
+            await event_manager.stop()
+
             # 停止输出处理循环
             self._output_timer_running = False
             output_task.cancel()
             try:
                 await output_task
+            except asyncio.CancelledError:
+                pass
+
+            refresh_output_cache_task.cancel()
+            try:
+                await refresh_output_cache_task
+            except asyncio.CancelledError:
+                pass
+
+            compensation_pending_task.cancel()
+            try:
+                await compensation_pending_task
             except asyncio.CancelledError:
                 pass
 

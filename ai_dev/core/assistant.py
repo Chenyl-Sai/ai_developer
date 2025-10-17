@@ -77,9 +77,19 @@ class AIProgrammingAssistant:
             })
             yield {"type": "error", "error": error_msg}
 
+    async def get_agent_state(self, config) -> str:
+        if self.main_agent:
+            return await self.main_agent.get_graph_status(config)
+        return "Finished"
+
     async def agent_is_running(self, config) -> bool:
         if self.main_agent:
             return await self.main_agent.graph_is_running(config)
+        return False
+
+    async def agent_is_interrupted(self, config) -> bool:
+        if self.main_agent:
+            return await self.main_agent.graph_is_interrupted(config)
         return False
 
     def reset_conversation(self):
