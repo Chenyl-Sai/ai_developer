@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from logging.handlers import TimedRotatingFileHandler
-from .error_monitor import error_monitor
 
+from langchain_core.messages import AIMessage
 
 class AgentLogger:
     """Agent执行过程日志记录器"""
@@ -136,12 +136,6 @@ class AgentLogger:
 
             self.logger.error(error_details)
 
-            # 记录到错误监控器
-            error_monitor.record_error(
-                error_type=type(exception).__name__ if exception else "Unknown",
-                context=f"agent_error:{agent_id}"
-            )
-
     def log_reasoning_start(self, agent_id: str, iteration: int):
         """记录推理开始"""
         if self.logger:
@@ -182,15 +176,13 @@ class AgentLogger:
                     content = self._sanitize_content(msg.content) if hasattr(msg, 'content') else str(msg)
                     self.logger.debug(f"[MODEL_INPUT_{i}] Agent: {agent_id}, 类型: {msg_type}, 内容: {content}")
 
-    def log_model_response(self, agent_id: str, model_name: str, response_length: int, full_response: str = None):
+    def log_model_response(self, agent_id: str, model_name: str, ai_message: AIMessage = None):
         """记录模型响应"""
         if self.logger:
-            self.logger.info(f"[MODEL_RESPONSE] Agent: {agent_id}, 模型: {model_name}, 响应长度: {response_length}")
+            self.logger.info(f"[MODEL_RESPONSE] Agent: {agent_id}, 模型: {model_name}")
 
             # 记录详细的响应内容
-            if full_response:
-                sanitized_response = self._sanitize_content(full_response)
-                self.logger.debug(f"[MODEL_OUTPUT] Agent: {agent_id}, 完整响应: {sanitized_response}")
+            self.logger.debug(f"[MODEL_OUTPUT] 完整响应: {ai_message}")
 
     def log_state_update(self, agent_id: str, state_changes: dict):
         """记录状态更新"""
@@ -256,11 +248,6 @@ class AgentLogger:
 
             self.logger.error(error_details)
 
-            # 记录到错误监控器
-            error_monitor.record_error(
-                error_type=type(exception).__name__ if exception else "Unknown",
-                context="general_error"
-            )
 
 
     def _is_prompt_toolkit_environment(self) -> bool:

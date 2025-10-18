@@ -4,7 +4,7 @@
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Generator
-from .base import StreamTool
+from .base import StreamTool, CommonToolArgs
 import os
 from pydantic import BaseModel, Field
 
@@ -19,7 +19,7 @@ class FileListTool(StreamTool):
     description: str = DESCRIPTION
     found_file_count: int = 0
 
-    class FileListArgs(BaseModel):
+    class FileListArgs(CommonToolArgs):
         path: str = Field(description="The absolute path to the directory to list (must be absolute, not relative)")
 
     args_schema: Type[BaseModel] = FileListArgs
@@ -107,7 +107,7 @@ class FileListTool(StreamTool):
 
         return result
 
-    def _execute_tool(self, path: str) -> Generator[Dict[str, Any], None, None]:
+    def _execute_tool(self, path: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
         """执行目录遍历"""
         safe_dir = self._safe_join_path(path)
 
@@ -137,13 +137,12 @@ class FileListTool(StreamTool):
             self.found_file_count = MAX_FILES
 
         yield {
-            "type": "result",
+            "type": "tool_end",
             "result_for_llm": result_data,
-            "show_message": f"目录遍历完成，找到 {self.found_file_count} 个文件/目录"
         }
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
         return kwargs.get("path")
 
     def _get_success_message(self, result: str) -> str:
-        return f"  ⎿ Found <b>{self.found_file_count}</b> files"
+        return f"Found <b>{self.found_file_count}</b> files"

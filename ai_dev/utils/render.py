@@ -1,5 +1,6 @@
-from prompt_toolkit.formatted_text import FormattedText
-from typing import Any
+from prompt_toolkit.formatted_text import FormattedText, AnyFormattedText, HTML, merge_formatted_text
+from typing import Any, TypedDict, Union
+from pydantic import BaseModel
 
 import ast
 from ai_dev.constants.product import MAIN_AGENT_NAME
@@ -7,48 +8,28 @@ from ai_dev.utils.todo import get_todos, TodoItemStorage
 from ai_dev.utils.logger import agent_logger
 
 
-async def process_tool_result(chunk: dict) -> list[tuple[str, Any]]:
-    """渲染工具执行结果
+class InputBlock(BaseModel):
+    id: str
+    content: str
 
-    Args:
-        chunk (dict): 流式输出的工具执行结果消息，包含tool_name、message、status、result、error
 
-    Returns:
-        list[tuples[str, str, str]]: 多行渲染文本，每一行是一个tuple，包含两个元素(kind, message)
-    """
-    result = []
-    message = chunk.get("message")
-    status = chunk.get("status")
-    if status == "error":
-        error = chunk.get("error")
-        result.append(("output_tool_error", f"    <style color='red'>{error if error else message}</style>"))
-    else:
-        if message is not None and len(message) > 0:
-            result.append(("output_tool_result", f"{message}"))
-        # 文件修改、写入工具
-        if chunk.get("tool_name") in ["FileEditTool", "FileWriteTool"]:
-            result.append(("output_tool_patch", str({
-                "file_path": chunk.get("result").get("absolute_path"),
-                "hunks": chunk.get("result").get("patch"),
-            })))
-        # Bash命令执行
-        elif chunk.get("tool_name") in ["BashExecuteTool"]:
-            result.append(("output_base_execute_result", str(chunk.get("result"))))
-        # 待办更新
-        elif chunk.get("tool_name") in ["TodoWriteTool"]:
-            agent_id = MAIN_AGENT_NAME
-            context = chunk.get("context", {})
-            if context and "agent_id" in context:
-                if len(context.get("agent_id")) > 0:
-                    agent_id = context.get("agent_id")
-            todos = await get_todos(agent_id)
-            # 如果全部都完成了，就不添加了
-            remains = [todo for todo in todos if todo.status != 'completed']
-            if len(remains) == 0:
-                todos = []
-            result.append(("todo", todos))
+class MessageBlock(BaseModel):
+    id: str
+    content: str | None = None
+    status: str | None = None
 
-    return result
+
+class ToolBlock(BaseModel):
+    id: str
+    tool_name: str
+    tool_args: str | None
+    status: str | None = None
+    message: str | None = None
+    exec_result_details: Any | None = None
+    context: dict | None = None
+
+
+OutputBlock = Union[str, tuple[str, str], InputBlock, MessageBlock, ToolBlock]
 
 
 def format_ai_output(text):
@@ -72,10 +53,92 @@ def format_ai_output(text):
     return ANSI(ansi_text)
 
 
-def format_patch_output(text) -> FormattedText:
-    patch_info = ast.literal_eval(text)
-    hunks = patch_info.get("hunks")
-    return FormattedText(render_hunks(hunks))
+async def format_output_block(block: OutputBlock) -> AnyFormattedText:
+    # 默认样式字符串
+    if isinstance(block, str):
+        return FormattedText([("", block)])
+    # 带样式的
+    elif isinstance(block, tuple):
+        return FormattedText([block])
+    # 用户输入
+    elif isinstance(block, InputBlock):
+        return FormattedText([("class:user", f"> {block.content}")])
+    # AI回复
+    elif isinstance(block, MessageBlock):
+        prefix = FormattedText([("fg:white", "⏺ ")])
+        return merge_formatted_text([prefix, format_ai_output(block.content)])
+    # 工具执行
+    elif isinstance(block, ToolBlock):
+        return await format_tool_block(block)
+
+
+async def format_tool_block(block: ToolBlock) -> AnyFormattedText:
+    tool_status = block.status
+    # 工具开始执行 & 执行过程中
+    if tool_status == "start":
+        # 展示标题
+        html_text = f"<style fg='#000000'>⏺</style> <bold>{block.tool_name}</bold>"
+        if block.tool_args:
+            html_text += f"({block.tool_args})"
+        html_text += "\n"
+        # 展示过程中的额外消息
+        if block.message:
+            html_text += f"  ⎿  {block.message}"
+        else:
+            html_text += f"  ⎿  Doing…"
+        return HTML(html_text)
+    # 工具执行成功
+    elif tool_status == "success":
+        # 展示标题，图标变色
+        html_text = f"<style fg='#33ff66'>⏺</style> <bold>{block.tool_name}</bold>"
+        if block.tool_args:
+            html_text += f"({block.tool_args})"
+        html_text += "\n"
+        # 展示总结性的信息
+        if block.message:
+            html_text += f"  ⎿  {block.message}"
+        html_text += "\n"
+        html = HTML(html_text)
+        # 对于一些特殊的工具需要展示执行的详情
+        detail = await format_tool_exec_detail(block)
+        if detail:
+            return merge_formatted_text([html, detail])
+        else:
+            return html
+    # 工具执行成功
+    elif tool_status == "error":
+        # 展示标题，图标变色
+        html_text = f"<style fg='#ff0000'>⏺</style> <bold>{block.tool_name}</bold>"
+        if block.tool_args:
+            html_text += f"({block.tool_args})"
+        html_text += "\n"
+        # 展示总结性的信息
+        if block.message:
+            html_text += f"  ⎿  <style fg='#ff0000'>{block.message}</style>"
+        else:
+            html_text += f"  ⎿  <style fg='#ff0000'>Error</style>"
+        html_text += "\n"
+        html = HTML(html_text)
+        # 对于一些特殊的工具需要展示执行的详情
+        detail = await format_tool_exec_detail(block)
+        if detail:
+            return merge_formatted_text([html, detail])
+        else:
+            return html
+
+
+async def format_tool_exec_detail(block: ToolBlock) -> AnyFormattedText:
+    tool_name = block.tool_name
+    # 文件编辑 & 文件写入， 需要展示修改对比
+    if tool_name in ["FileEditTool", "FileWriteTool"]:
+        patch = block.exec_result_details.get("patch")
+        if patch:
+            return FormattedText(render_hunks(patch))
+    # Bash命令执行
+    elif tool_name in ["BashExecuteTool"]:
+        return format_bash_execute_tool_output(block.exec_result_details)
+
+    return None
 
 
 def render_hunks(hunks: list[dict]) -> list[tuple]:
@@ -167,12 +230,9 @@ def render_hunk(hunk: dict) -> list[tuple]:
     return lines
 
 
-def format_base_execute_tool_output(str) -> FormattedText:
+def format_bash_execute_tool_output(bash_execute_result: dict) -> FormattedText:
     """格式化展示Bash执行结果"""
     result = []
-
-    bash_execute_result = ast.literal_eval(str)
-
     stderr = bash_execute_result.get('stderr', '')
     error_message = bash_execute_result.get('error_message', '')
     stdout = bash_execute_result.get('stdout', '')
@@ -187,7 +247,6 @@ def format_base_execute_tool_output(str) -> FormattedText:
         result.append(("class:common.red", lines))
         if remaining_lines > 0:
             result.append(("class:common.gray", f"    ... +{remaining_lines} lines"))
-
     # 其次检查 stdout
     elif stdout and len(stdout.strip()) > 0:
         lines, remaining_lines = _format_multiline_text(stdout)

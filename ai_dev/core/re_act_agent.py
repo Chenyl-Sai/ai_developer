@@ -152,23 +152,25 @@ class ReActAgent:
                 "user_interrupted": True,
             }
 
-        # 流式处理模型响应
-        async for chunk in self.bound_model.astream(state.messages):
-            # 处理文本内容 - 实时产生消息流输出
-            if chunk.content:
-                response_content += chunk.content
-
-            # 拼接完成AI消息
-            if full_message is None:
-                full_message = chunk
-            else:
-                full_message = full_message + chunk
-
-            # 判断是否有Event.INTERRUPT事件，如果有则中断输出，直接退出
-            if self._interrupted:
-                return {
-                    "user_interrupted": True,
-                }
+        # # 流式处理模型响应
+        # async for chunk in self.bound_model.astream(state.messages):
+        #     # 处理文本内容 - 实时产生消息流输出
+        #     if chunk.content:
+        #         response_content += chunk.content
+        #
+        #     # 拼接完成AI消息
+        #     if full_message is None:
+        #         full_message = chunk
+        #     else:
+        #         full_message = full_message + chunk
+        #
+        #     # 判断是否有Event.INTERRUPT事件，如果有则中断输出，直接退出
+        #     if self._interrupted:
+        #         return {
+        #             "user_interrupted": True,
+        #         }
+        #
+        full_message = await self.bound_model.ainvoke(state.messages)
 
         return {
             "tool_calls": full_message.tool_calls,
@@ -209,7 +211,7 @@ class ReActAgent:
                 # 添加拒绝消息
                 error_message = ToolMessage(
                     content=f"权限被拒绝: {tool_name}",
-                    tool_call_id=tool_call.get("id", "unknown")
+                    tool_call_id=tool_call.get("id"),
                 )
                 state.messages.append(error_message)
             elif decision == PermissionDecision.ASK:
@@ -254,7 +256,7 @@ class ReActAgent:
                 denied_tool_calls.append(tool_call)
                 error_message = ToolMessage(
                     content=f"权限被拒绝: {tool_call['name']}",
-                    tool_call_id=tool_call.get("id", "unknown")
+                    tool_call_id=tool_call.get("id"),
                 )
                 state.messages.append(error_message)
         if user_refuse:
@@ -286,7 +288,7 @@ class ReActAgent:
                 # 添加中断消息
                 error_message = ToolMessage(
                     content=f"用户中断执行",
-                    tool_call_id=tool_call.get("id", "unknown")
+                    tool_call_id=tool_call.get("id"),
                 )
                 state.messages.append(error_message)
 
@@ -296,11 +298,17 @@ class ReActAgent:
             }
 
         for tool_call in state.tool_calls:
+            # 手动弄一些参数进去
+            args = tool_call.setdefault("args", {})
+            args["context"] = {
+                "agent_id": state.agent_id,
+                "tool_id": tool_call.get("id"),
+            }
             tool = {tool.name: tool for tool in self.tools}[tool_call["name"]]
             if tool.is_parallelizable:
                 # 可并行工具：创建异步任务
                 task = asyncio.create_task(
-                    tool.ainvoke(tool_call, context={"agent_id": state.agent_id})
+                    tool.ainvoke(tool_call)
                 )
                 parallelizable_tasks.append((tool_call, task))
             else:
@@ -320,7 +328,7 @@ class ReActAgent:
                     # 处理执行异常
                     error_result = ToolMessage(
                         content=f"工具执行失败: {str(result)}",
-                        tool_call_id=tool_call.get("id", "unknown")
+                        tool_call_id=tool_call.get("id"),
                     )
                     state.messages.append(error_result)
                 else:
@@ -334,18 +342,18 @@ class ReActAgent:
                 # 添加中断消息
                 error_message = ToolMessage(
                     content=f"用户中断执行",
-                    tool_call_id=tool_call.get("id", "unknown")
+                    tool_call_id=tool_call.get("id"),
                 )
                 state.messages.append(error_message)
             else:
                 try:
-                    tool_result = await tool.ainvoke(tool_call, context={"agent_id": state.agent_id})
+                    tool_result = await tool.ainvoke(tool_call)
                     state.messages.append(tool_result)
                 except Exception as e:
                     # 处理单个工具执行失败
                     error_result = ToolMessage(
                         content=f"工具执行失败: {str(e)}",
-                        tool_call_id=tool_call.get("id", "unknown")
+                        tool_call_id=tool_call.get("id"),
                     )
                     state.messages.append(error_result)
 
@@ -413,8 +421,6 @@ class ReActAgent:
         # 记录开始执行
         agent_logger.info(f"[AGENT_START] Agent: {state.agent_id}, thread_id: {thread_id}, 输入: {user_input}")
 
-        # 使用graph的流式执行 - 同时获取节点更新、消息流和自定义输出
-        full_response = ""
 
         stream = None
         # 获取图当前的状态
@@ -437,32 +443,45 @@ class ReActAgent:
             state.messages = [HumanMessage(content=user_input)]
             stream = self.graph.astream(state, config=config, stream_mode=["updates", "messages", "custom"])
         if stream:
+            full_response = None
             async for stream_mode, chunk in stream:
                 # 处理messages流输出 - 来自reason节点的模型实时输出
                 if stream_mode == "messages":
-                    # LangGraph的messages流直接提供AIMessageChunk
-                    if isinstance(chunk, AIMessageChunk) and chunk.content:
-                        # 处理模型实时文本输出 - 只有当内容不为空时才处理
-                        content = chunk.content
-                        # 累积整个响应
-                        full_response += content
-                        yield {
-                            "type": "text_chunk",
-                            "content": content,
-                            "full_response": full_response
-                        }
-                    elif isinstance(chunk, tuple) and len(chunk) == 2:
-                        # 处理(token, metadata)结构
-                        token, metadata = chunk
-                        if isinstance(token, AIMessageChunk) and token.content:
-                            # 处理模型实时文本输出 - 只有当内容不为空时才处理
-                            content = token.content
-                            # 累积整个响应
-                            full_response += content
+                    token: AIMessageChunk
+                    metadata: dict
+                    token, metadata = chunk
+                    if isinstance(token, AIMessageChunk):
+                        if full_response:
+                            full_response += token
+                        else:
+                            full_response = token
+
+                        content = token.content
+                        usage = token.usage_metadata
+                        if content is None or content == "":
+                            if not usage:
+                                # 有时候模型不返回content，只返回ToolCall，这时候不是start消息，不需要向前端写东西了
+                                if not token.additional_kwargs:
+                                    agent_logger.debug(f"token: {token}")
+                                    # 开始消息
+                                    yield {
+                                        "type": "message_start",
+                                        "message_id": token.id,
+                                    }
+                            else:
+                                # 记录模型响应信息
+                                agent_logger.log_model_response(state.agent_id, self.model_name, full_response)
+                                # 结束消息
+                                yield {
+                                    "type": "message_stop",
+                                    "message_id": token.id,
+                                }
+                        else:
+                            # 消息
                             yield {
-                                "type": "text_chunk",
-                                "content": content,
-                                "full_response": full_response
+                                "type": "message_delta",
+                                "message_id": token.id,
+                                "delta": content,
                             }
 
 
@@ -470,23 +489,8 @@ class ReActAgent:
                 elif stream_mode == "updates":
                     # chunk的结构通常是 (node_name, update_dict)
                     for node_name, update_dict in chunk.items():
-                        # 处理reason节点的输出
-                        if node_name == "reason":
-                            # 处理reason节点的最终状态更新 - 只处理工具调用，避免重复处理消息
-                            # 注意：这里不再处理messages，因为messages流已经处理了实时输出
-                            # 输出一个模型回答完成类型，用于外部处理拼接流重置
-                            yield {
-                                "type": "llm_finish",
-                                "content": "LLM回答完成",
-                            }
-
-                        # 处理execute_tools节点的输出
-                        elif node_name == "execute_tools":
-                            # 自定义处理了
-                            pass
-
                         # 处理interrupt节点的输出
-                        elif node_name == "__interrupt__":
+                        if node_name == "__interrupt__":
                             # interrupt节点会包含权限请求信息
                             if isinstance(update_dict, tuple) and len(update_dict) > 0 and isinstance(update_dict[0],
                                                                                                       Interrupt):
@@ -501,15 +505,6 @@ class ReActAgent:
                     # 处理工具开始执行的消息
                     yield chunk
 
-            # 记录模型响应信息
-            agent_logger.log_model_response(state.agent_id, self.model_name, len(full_response), full_response)
-
-            # 发送完成信号
-            yield {
-                "type": "complete",
-                "full_response": full_response,
-                "agent_id": state.agent_id
-            }
 
     async def get_graph_status(self, config) -> str:
         """获取当前图的执行状态"""

@@ -6,11 +6,10 @@ import json, asyncio, uuid
 from typing import Any, Dict, Type, Generator
 from datetime import datetime
 
-from .base import BaseTool
+from .base import BaseTool, CommonToolArgs
 from ..constants.prompt import get_sub_agent_prompt
 from ..core.re_act_agent import ReActAgent
 from ..utils.subagent import get_sub_agent_by_name, get_agent_descriptions
-from ..utils.stream_processor import StreamProcessor
 from ..core.global_state import GlobalState
 from pydantic import BaseModel, Field
 from langgraph.config import get_stream_writer
@@ -89,14 +88,14 @@ assistant: "I'm going to use the Task tool to launch the with the greeting-respo
     def is_readonly(self) -> bool:
         return True
 
-    class TaskArgs(BaseModel):
+    class TaskArgs(CommonToolArgs):
         description: str = Field(description="A short (3-5 word) description of the task")
         prompt: str = Field(description="The task for the agent to perform")
         agent_name: str = Field(description="The name of specialized agent to use for this task")
 
     args_schema: Type[BaseModel] = TaskArgs
 
-    async def _run(self, description: str, prompt: str, agent_name: str):
+    async def _run(self, description: str, prompt: str, agent_name: str, **kwargs):
         """
         创建子智能体处理任务
 
@@ -153,10 +152,7 @@ assistant: "I'm going to use the Task tool to launch the with the greeting-respo
             "recursion_limit": 1000,
         }
 
-        async for chunk in StreamProcessor.process_sub_agent_stream(
-            sub_agent.run_stream(message, config),
-            agent_name=agent_name
-        ):
+        async for chunk in sub_agent.run_stream(message, config):
             writer(chunk)
 
         return "Task finish success"

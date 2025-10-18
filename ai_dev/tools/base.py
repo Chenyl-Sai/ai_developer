@@ -3,15 +3,18 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type, Generator
+from typing import Any, Dict, List, Optional, Type, Generator, Annotated
 from pathlib import Path
 import os
 import json
 from pydantic import BaseModel
-from langchain_core.tools import BaseTool as LangChainBaseTool
+from langchain_core.tools import BaseTool as LangChainBaseTool, InjectedToolArg
 from langgraph.config import get_stream_writer
 from ai_dev.core.global_state import GlobalState
+from ai_dev.utils.logger import agent_logger
 
+class CommonToolArgs(BaseModel):
+    context: Annotated[dict, InjectedToolArg]
 
 class BaseTool(LangChainBaseTool, ABC):
     """工具基类 - 继承自LangChain的BaseTool"""
@@ -90,7 +93,7 @@ class BaseTool(LangChainBaseTool, ABC):
 class StreamTool(BaseTool):
     """支持流式输出的工具基类"""
 
-    def _run(self, **kwargs) -> str:
+    def _run(self, *args, **kwargs) -> str:
         """
         执行工具 - 自动处理流式输出
 
@@ -100,43 +103,46 @@ class StreamTool(BaseTool):
         3. 完成/失败：显示最终结果
         """
         writer = get_stream_writer()
-
+        context = kwargs.get("context", {})
         # 阶段1: 开始执行
         if self._send_tool_start_event():
             writer({
                 "type": "tool_start",
+                "tool_id": context.get("tool_id"),
                 "tool_name": self.name,
                 "tool_args": kwargs,
+                "shown_tool_args": self._format_args(kwargs),
                 "title": f"<b>{self.show_name}</b>({self._format_args(kwargs)})",
                 "message": "Doing...",
-                "context": kwargs.get("context", {})
+                "context": context
             })
 
         try:
             # 执行工具逻辑 - 支持生成器返回
             llm_result = ""
-            for result in self._execute_tool(**kwargs):
+            for result in self._execute_tool(*args, **kwargs):
                 # 处理新的字典格式
-                if result["type"] == "progress":
+                if result["type"] == "tool_delta":
                     # 进度信息直接显示给用户
                     writer({
-                        "type": "tool_progress",
+                        "type": "tool_delta",
+                        "tool_id": context.get("tool_id"),
                         "tool_name": self.name,
                         "message": result.get("show_message", ""),
-                        "status": "progress",
-                        "context": kwargs.get("context", {})
+                        "context": context
                     })
-                elif result["type"] == "result":
+                elif result["type"] == "tool_end":
                     # 最终结果
                     llm_result = result.get("result_for_llm", "")
                     # 阶段2: 执行完成
                     writer({
-                        "type": "tool_complete",
+                        "type": "tool_end",
+                        "tool_id": context.get("tool_id"),
                         "tool_name": self.name,
                         "message": f"{self._get_success_message(llm_result)}",
                         "status": "success",
                         "result": llm_result,
-                        "context": kwargs.get("context", {})
+                        "context": context
                     })
 
             return llm_result
@@ -144,12 +150,12 @@ class StreamTool(BaseTool):
         except Exception as e:
             # 阶段2: 执行失败
             writer({
-                "type": "tool_complete",
+                "type": "tool_end",
+                "tool_id": context.get("tool_id"),
                 "tool_name": self.name,
-                "message": f"{str(e)}",
+                "message": str(e),
                 "status": "error",
-                "error": str(e),
-                "context": kwargs.get("context", {})
+                "context": context
             })
             raise e
 
@@ -157,7 +163,7 @@ class StreamTool(BaseTool):
         """"是否发送工具开始执行事件"""
         return True
 
-    def _execute_tool(self, **kwargs) -> Any:
+    def _execute_tool(self, *args, **kwargs) -> Any:
         """
         执行工具逻辑 - 子类需要重写此方法
 

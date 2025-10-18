@@ -3,7 +3,7 @@
 """
 
 from typing import Any, Dict, Type, Generator
-from .base import StreamTool
+from .base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 
 from ..core.global_state import GlobalState
@@ -20,7 +20,7 @@ class FileReadTool(StreamTool):
     name: str = "FileReadTool"
     description: str = DESCRIPTION
 
-    class FileReadArgs(BaseModel):
+    class FileReadArgs(CommonToolArgs):
         file_path: str = Field(description="The absolute path to the file to read")
         offset: int = Field(default=1, description="The line number to start reading from. Only provide if the file is too large to read at once")
         limit: int = Field(default=None, description="The number of lines to read. Only provide if the file is too large to read at once.")
@@ -35,7 +35,7 @@ class FileReadTool(StreamTool):
     def is_readonly(self) -> bool:
         return True
 
-    def _execute_tool(self, file_path: str, offset: int = 1, limit: int = None) -> Generator[Dict[str, Any], None, None]:
+    def _execute_tool(self, file_path: str, offset: int = 1, limit: int = None, **kwargs) -> Generator[Dict[str, Any], None, None]:
         """执行文件读取"""
         safe_path = self._safe_join_path(file_path)
 
@@ -84,9 +84,8 @@ class FileReadTool(StreamTool):
         }
 
         yield {
-            "type": "result",
+            "type": "tool_end",
             "result_for_llm": result_data,
-            "show_message": f"成功读取文件: {file_path}"
         }
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
@@ -101,7 +100,7 @@ class FileReadTool(StreamTool):
         start_line = result.get("start_line", 1)
 
         if line_count == total_lines:
-            return f"  ⎿ Read <b>{line_count}</b> lines"
+            return f"Read <b>{line_count}</b> lines"
         else:
             end_line = start_line + line_count - 1
-            return f"  ⎿ Read <b>{line_count}</b> lines (lines {start_line}-{end_line} of {total_lines})"
+            return f"Read <b>{line_count}</b> lines (lines {start_line}-{end_line} of {total_lines})"

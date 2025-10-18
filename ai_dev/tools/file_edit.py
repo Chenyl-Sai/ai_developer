@@ -3,7 +3,7 @@
 """
 
 from typing import Any, Dict, Type, Literal, Generator
-from .base import StreamTool
+from .base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
 from ai_dev.utils.patch import get_patch
@@ -79,14 +79,14 @@ Remember: when making multiple file edits in a row to the same file, you should 
     def is_parallelizable(self) -> bool:
         return False
 
-    class FileEditArgs(BaseModel):
+    class FileEditArgs(CommonToolArgs):
         file_path: str = Field(description="The absolute path to the file to modify")
         old_string: str = Field(description="The text to replace")
         new_string: str = Field(description="The text to replace it with")
 
     args_schema: Type[BaseModel] = FileEditArgs
 
-    def _execute_tool(self, file_path: str, old_string: str, new_string: str = None) -> Generator[Dict[str, Any], None, None]:
+    def _execute_tool(self, file_path: str, old_string: str, new_string: str = None, **kwargs) -> Generator[Dict[str, Any], None, None]:
         """执行文件编辑"""
         safe_path = self._safe_join_path(file_path)
         old_file_exists = safe_path.exists()
@@ -113,9 +113,8 @@ Remember: when making multiple file edits in a row to the same file, you should 
         }
 
         yield {
-            "type": "result",
+            "type": "tool_end",
             "result_for_llm": result_data,
-            "show_message": f"成功编辑文件: {file_path}"
         }
 
 
@@ -195,4 +194,4 @@ Remember: when making multiple file edits in a row to the same file, you should 
                 elif line.startswith('+'):
                     total_add += 1
 
-        return f"  ⎿ Updated {llm_result.get('file_path')} with {total_add} additions and {total_remove} removal"
+        return f"Updated {llm_result.get('file_path')} with {total_add} additions and {total_remove} removal"

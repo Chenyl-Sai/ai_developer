@@ -4,7 +4,7 @@
 
 from pathlib import Path
 from typing import Any, Dict, List, Type, Generator
-from .base import StreamTool
+from .base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 from ai_dev.core.global_state import GlobalState
 
@@ -38,14 +38,14 @@ class GrepTool(StreamTool):
     def is_parallelizable(self) -> bool:
         return True
 
-    class GrepArgs(BaseModel):
+    class GrepArgs(CommonToolArgs):
         pattern: str = Field(description="The regular expression pattern to search for in file contents")
         directory: str = Field(default="", description="The directory to search in. Defaults to the current working directory.")
         file_pattern: str = Field(default="", description="File pattern to include in the search (e.g. '*.js', '*.{ts,tsx}')")
 
     args_schema: Type[BaseModel] = GrepArgs
 
-    def _execute_tool(self, pattern: str, directory: str = "", file_pattern: str = "", ) -> Generator[Dict[str, Any], None, None]:
+    def _execute_tool(self, pattern: str, directory: str = "", file_pattern: str = "", **kwargs) -> Generator[Dict[str, Any], None, None]:
         """执行文件搜索"""
         import subprocess
         import os
@@ -96,18 +96,16 @@ class GrepTool(StreamTool):
                 result_data = json.dumps(results, ensure_ascii=False, indent=2)
 
                 yield {
-                    "type": "result",
+                    "type": "tool_end",
                     "result_for_llm": result_data,
-                    "show_message": f"搜索完成，找到 {self.found_file_count} 个文件"
                 }
 
             elif result.returncode == 1:
                 # 没有找到匹配的文件
                 result_data = "[]"
                 yield {
-                    "type": "result",
+                    "type": "tool_end",
                     "result_for_llm": result_data,
-                    "show_message": "搜索完成，未找到匹配的文件"
                 }
 
             else:
@@ -118,4 +116,4 @@ class GrepTool(StreamTool):
             raise RuntimeError("ripgrep command not found. Please install ripgrep (rg) to use this tool.")
 
     def _get_success_message(self, result: str) -> str:
-        return f"  ⎿ Found <b>{self.found_file_count}</b> files"
+        return f"Found <b>{self.found_file_count}</b> files"

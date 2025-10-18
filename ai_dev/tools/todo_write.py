@@ -9,6 +9,7 @@ from uuid import uuid4
 from . import StreamTool
 from pydantic import BaseModel, Field
 from ai_dev.constants.product import MAIN_AGENT_NAME
+from .base import CommonToolArgs
 
 
 class TodoItem(BaseModel):
@@ -19,7 +20,7 @@ class TodoItem(BaseModel):
     priority: str = Field(default="medium", description="任务优先级: low, medium, high")
 
 
-class TodoWriteArgs(BaseModel):
+class TodoWriteArgs(CommonToolArgs):
     """TodoWrite工具参数模型"""
     todos: List[TodoItem] = Field(description="待办事项列表，每个对象包含content、status、priority、id字段")
 
@@ -130,9 +131,8 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         asyncio.run(delete_todo_file_if_need(agent_id))
 
         yield {
-            "type": "result",
+            "type": "tool_end",
             "result_for_llm": result_data,
-            "show_message": "待办事项已更新"
         }
 
     def _verify_input(self, todos: list[TodoItem]):

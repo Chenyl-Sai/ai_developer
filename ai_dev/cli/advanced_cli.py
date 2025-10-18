@@ -20,7 +20,6 @@ from prompt_toolkit.keys import Keys
 
 from ai_dev.components.choice_window import ChoiceWindow
 from ai_dev.components.input_window import InputWindow
-from ai_dev.utils.render import process_tool_result
 from ..core.assistant import AIProgrammingAssistant
 from ..core.global_state import GlobalState
 from ..core.config_manager import ConfigManager
@@ -204,7 +203,7 @@ class AdvancedCLI:
             return 'Queued'
 
         # 直接显示用户输入
-        await self.output_window.add_output("output_user", f"\n> {user_input}\n")
+        await self.output_window.add_user_input_block(user_input)
         return 'Input'
 
     async def _output_processing_loop(self):
@@ -228,8 +227,8 @@ class AdvancedCLI:
                     elif item[0] == 'exception':
                         # 异常信息 - 显示在界面
                         _, error_msg, stack_trace = item
-                        await self.output_window.add_output("output_error", f"❌ {error_msg}")
-                        await self.output_window.add_output("output_info", "详细信息请查看日志文件")
+                        await self.output_window.add_common_block("class:error", f"❌ {error_msg}")
+                        await self.output_window.add_common_block("class:info", "详细信息请查看日志文件")
                         # 记录完整堆栈到日志
                         agent_logger.error(f"[Captured Exception]\n{stack_trace}")
 
@@ -263,15 +262,15 @@ class AdvancedCLI:
         command_class = self.command_registry.get_command(command_name)
 
         if not command_class:
-            await self.output_window.add_output("output_error", f"未知指令: /{command_name}")
-            await self.output_window.add_output("output_info", "使用 /help 查看可用指令")
+            await self.output_window.add_common_block("class:error", f"未知指令: /{command_name}")
+            await self.output_window.add_common_block("class:info", "使用 /help 查看可用指令")
             return True
 
         try:
             command = command_class()
             return command.execute(self, args)
         except Exception as e:
-            await self.output_window.add_output("output_error", f"执行指令 /{command_name} 时出错: {e}")
+            await self.output_window.add_common_block("class:error", f"执行指令 /{command_name} 时出错: {e}")
             agent_logger.log_agent_error("slash_command", str(e), e, {
                 "command": command_name,
                 "args": args,
@@ -282,13 +281,10 @@ class AdvancedCLI:
     async def process_stream_input(self, user_input: str):
         """流式处理用户输入"""
         if not self.assistant:
-            await self.output_window.add_output("output_error", "助手未初始化")
+            await self.output_window.add_common_block("class:error", "助手未初始化")
             return
 
         agent_logger.log_agent_start(MAIN_AGENT_NAME, user_input)
-
-        full_response = ""
-        has_interrupted = False
 
         try:
 
@@ -299,65 +295,34 @@ class AdvancedCLI:
                     await self.interruption_manager.handle_interruption(
                         chunk["type"], chunk["interrupt_info"]
                     )
-                    has_interrupted = True
 
                 # 异常
                 elif chunk.get("type") == "error":
-                    await self.output_window.add_output("output_error", chunk["error"])
-                    agent_logger.log_agent_error(MAIN_AGENT_NAME, chunk["error"], None, {
-                        "stage": "stream_processing"
-                    })
+                    await self.output_window.add_common_block("class:error", chunk["error"])
 
-                # AI流式消息
-                elif chunk.get("type") == "text_chunk":
-                    full_response = chunk["full_response"]
-                    content = chunk["content"]
-                    await self.output_window.add_output("output_ai", content, append=True)
-
-                # 开始工具调用
-                elif chunk.get("type") == "tool_start":
-                    message = chunk.get("title", "调用工具")
-                    await self.output_window.add_output("output_tool_title", f"\n {message}")
-
-                # 工具中间信息
-                elif chunk.get("type") == "tool_progress":
-                    message = chunk.get("message", "")
-                    await self.output_window.add_output("output_info", f"🛠️ {message}")
-
-                # 工具调用完成
-                elif chunk.get("type") == "tool_complete":
-                    for item in await process_tool_result(chunk):
-                        if item[0].startswith('output_'):
-                            await self.output_window.add_output(item[0], item[1])
-                        else:
-                            self.output_window.set_todo_lines(item[1])
-
-                # 用户输入排队中
+                # 用户输入被排队了
                 elif chunk.get("type") == "user_input_queued":
                     # 如果用户输入的时候agent没有在运行，但是实际提交的时候已经运行了，会被agent塞到队列里不执行，这时候从输出面板里删除掉
                     # 在pending面板会自动显示
-                    await self.output_window.remove_user_input(chunk["content"])
+                    await self.output_window.remove_recently_user_input_block(chunk["content"])
+
+                # 用户排队的消息被消费了
                 elif chunk.get("type") == "user_input_consumed":
                     # 用户pending消息被消费
                     agent_logger.debug(f"[Receive user input consumed]: {chunk['content']}")
                     await self.output_window.user_pending_input_consumed(chunk["content"])
-                elif chunk.get("type") == "custom":
-                    content = chunk.get("content", "")
-                    await self.output_window.add_output("output_info", f"📌 {content}")
 
-                elif chunk.get("type") == "complete":
-                    full_response = chunk["full_response"]
-                    agent_logger.log_agent_complete(MAIN_AGENT_NAME, full_response)
+                # 其他类型的消息
+                else:
+                    await self.output_window.add_stream_output(chunk)
+
 
         except Exception as e:
-            await self.output_window.add_output("output_error", f"处理流时出错: {str(e)}")
+            await self.output_window.add_common_block("class:error", f"处理流时出错: {str(e)}")
             agent_logger.log_agent_error(MAIN_AGENT_NAME, str(e), e, {
                 "user_input": user_input,
                 "stage": "stream_processing"
             })
-
-        if not full_response and not has_interrupted:
-            agent_logger.log_no_response(MAIN_AGENT_NAME, "处理了但没有生成响应")
 
     def show_permission_request(self, choice_text: FormattedText, options: list):
         """显示权限请求选择界面"""
@@ -411,7 +376,7 @@ class AdvancedCLI:
             "• 输入 'quit' 退出程序",
             ""
         ]
-        await self.output_window.add_outputs("output_info", welcome_texts)
+        await self.output_window.batch_add_common_block("class:info", welcome_texts)
 
     async def run_interactive_stream(self):
         """运行流式交互式模式"""
@@ -440,7 +405,7 @@ class AdvancedCLI:
             # 自定义样式
             style = Style.from_dict({
                 'separator': '#888888',
-                'user': '#dddddd bold',
+                'user': '#dddddd',
                 'ai': '',
                 'error': '#FF6B6B bold',
                 'warning': '#FFA726 bold',
@@ -498,7 +463,7 @@ class AdvancedCLI:
             agent_logger.debug("[Start] 应用结束")
 
             # 清理
-            await self.output_window.add_output("output_info", "感谢使用AI编程助手！")
+            await self.output_window.add_common_block("class:info", "感谢使用AI编程助手！")
 
         except KeyboardInterrupt:
             agent_logger.info("[Start] 用户中断")

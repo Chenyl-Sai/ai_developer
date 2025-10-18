@@ -5,7 +5,6 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from ..models.state import AgentState
-from ..utils.stream_processor import StreamProcessor
 from .re_act_agent import ReActAgent, SubAgentState
 from ..constants.prompt import get_system_prompt
 from ..utils.logger import agent_logger
@@ -62,10 +61,7 @@ class AIProgrammingAssistant:
             agent_logger.log_model_call(MAIN_AGENT_NAME, self.main_agent.model_name, len(user_input))
 
             # 使用真正的流式输出，传递thread_id配置
-            async for chunk in StreamProcessor.process_sub_agent_stream(
-                self.main_agent.run_stream(user_input, config=config),
-                agent_name=MAIN_AGENT_NAME
-            ):
+            async for chunk in self.main_agent.run_stream(user_input, config=config):
                 yield chunk
 
 

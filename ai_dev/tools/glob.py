@@ -4,7 +4,7 @@
 
 from pathlib import Path
 from typing import Any, Dict, List, Type, Generator
-from .base import StreamTool
+from .base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 
 DESCRIPTION = """- Fast file pattern matching tool that works with any codebase size
@@ -33,13 +33,13 @@ class GlobTool(StreamTool):
     def is_parallelizable(self) -> bool:
         return True
 
-    class GlobArgs(BaseModel):
+    class GlobArgs(CommonToolArgs):
         directory: str = Field(description="The directory to search in. Defaults to the current working directory.")
         pattern: str = Field(description="The glob pattern to match files against")
 
     args_schema: Type[BaseModel] = GlobArgs
 
-    def _execute_tool(self, directory: str, pattern: str) -> Generator[Dict[str, Any], None, None]:
+    def _execute_tool(self, directory: str, pattern: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
         """执行文件模式匹配"""
         import json
 
@@ -69,10 +69,9 @@ class GlobTool(StreamTool):
         result_data = json.dumps(files, ensure_ascii=False, indent=2)
 
         yield {
-            "type": "result",
+            "type": "tool_end",
             "result_for_llm": result_data,
-            "show_message": f"搜索完成，找到 {self.found_file_count} 个文件"
         }
 
     def _get_success_message(self, result: str) -> str:
-        return f"  ⎿ Found <b>{self.found_file_count}</b> files"
+        return f"Found <b>{self.found_file_count}</b> files"

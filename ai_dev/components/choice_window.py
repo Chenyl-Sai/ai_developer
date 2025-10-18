@@ -93,7 +93,7 @@ class ChoiceWindow(CommonWindow):
     async def _handle_choice_input(self, choice: str):
         """处理选择输入"""
         if choice not in ['1', '2', '3']:
-            await self.cli.output_window.add_output("output_output_error", "❌ 请输入 1、2 或 3")
+            await self.cli.output_window.add_common_block("class:error", "❌ 请输入 1、2 或 3")
             return
 
         if choice == '3':
@@ -123,7 +123,7 @@ class ChoiceWindow(CommonWindow):
 
             agent_logger.info(f"中断恢复处理完成: {recovery_input}")
         except Exception as e:
-            await self.cli.output_window.add_output("error", f"中断恢复处理失败: {e}")
+            await self.cli.output_window.add_common_block("class:error", f"Error: {e}")
             agent_logger.log_agent_error("interruption_recovery", str(e), e, {
                 "recovery_input": recovery_input,
                 "stage": "interruption_recovery"

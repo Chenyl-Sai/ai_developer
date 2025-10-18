@@ -6,7 +6,7 @@ import asyncio
 import subprocess
 from typing import Any, Dict, Optional, Callable, Type, Generator
 from pydantic import BaseModel, Field
-from .base import StreamTool
+from .base import StreamTool, CommonToolArgs
 from ai_dev.utils.bash_executor import (
     BashExecutor,
     CommandResult,
@@ -36,7 +36,7 @@ BANNED_COMMANDS = [
   'safari',
 ]
 
-class BashExecuteArgs(BaseModel):
+class BashExecuteArgs(CommonToolArgs):
     """Bash 执行工具参数"""
     command: str = Field(..., description="The command to execute")
     propose: str = Field(description="Briefly explain the intention of the bash script executed this time")
@@ -209,9 +209,8 @@ Important:
             result_data = self._execute_direct(args, working_dir)
 
         yield {
-            "type": "result",
+            "type": "tool_end",
             "result_for_llm": result_data,
-            "show_message": f"Bash命令执行完成: {args.command}"
         }
 
     def _execute_direct(self, args: BashExecuteArgs, working_dir: str) -> Dict[str, Any]:

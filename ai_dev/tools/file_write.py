@@ -4,7 +4,7 @@
 
 from pathlib import Path
 from typing import Any, Dict, Type, Generator
-from .base import StreamTool
+from .base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
 from ai_dev.utils.patch import get_patch
@@ -38,7 +38,7 @@ class FileWriteTool(StreamTool):
     def is_parallelizable(self) -> bool:
         return False
 
-    class FileWriteArgs(BaseModel):
+    class FileWriteArgs(CommonToolArgs):
         file_path: str = Field(description="The absolute path to the file to write (must be absolute, not relative)")
         content: str = Field(description="The content to write to the file")
 
@@ -82,9 +82,8 @@ class FileWriteTool(StreamTool):
         }
 
         yield {
-            "type": "result",
+            "type": "tool_end",
             "result_for_llm": result_data,
-            "show_message": f"成功写入文件: {file_path}"
         }
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
@@ -98,4 +97,4 @@ class FileWriteTool(StreamTool):
         for hunk in hunks if hunks else []:
             total_add += len(hunk["lines"])
 
-        return f"  ⎿ Wrote <bold>{total_add}</bold> lines to <bold>{llm_result.get('file_path')}</bold>"
+        return f"Wrote <bold>{total_add}</bold> lines to <bold>{llm_result.get('file_path')}</bold>"
