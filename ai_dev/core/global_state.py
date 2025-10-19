@@ -3,9 +3,9 @@
 """
 
 import os
-import queue
 from typing import Dict, Any, Optional
 from pathlib import Path
+
 from ..models.state import EnvironmentState
 from ai_dev.utils.collection import AsyncBatchQueue
 
@@ -19,6 +19,7 @@ class GlobalState:
     _instance = None
     _environment_state: Optional[EnvironmentState] = None
     _config_manager = None
+    _model_manager = None
     _cli_instance = None
     _user_input_queue: AsyncBatchQueue = None
 
@@ -80,6 +81,14 @@ class GlobalState:
     def get_config_manager(cls):
         """获取配置管理器实例"""
         return cls._config_manager
+
+    @classmethod
+    def set_model_manager(cls, model_manager):
+        cls._model_manager = model_manager
+
+    @classmethod
+    def get_model_manager(cls):
+        return cls._model_manager
 
     @classmethod
     def set_cli_instance(cls, cli_instance):

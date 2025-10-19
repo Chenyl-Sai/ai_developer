@@ -2,16 +2,27 @@
 Agent状态模型定义
 """
 
-from typing import List, Dict, Any, Optional, Union, Annotated
+from typing import List, Dict, Any, Optional, Union, Annotated, Literal
 from pydantic import BaseModel, Field
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage, AnyMessage
+from langchain_core.messages.utils import MessageLikeRepresentation
 from langgraph.graph import add_messages
+
+Messages = Union[list[MessageLikeRepresentation], MessageLikeRepresentation]
+
+
+def add_or_replace_messages(left: Messages,
+                            right: Messages) -> Messages:
+    """用来处理压缩消息之后需要替换掉原先messages列表的情况"""
+    if isinstance(right, dict) and "messages" in right and "_replace" in right:
+        return right.get("messages")
+    else:
+        return add_messages(left, right)
 
 
 class AgentState(BaseModel):
     """Agent状态"""
     # 对话历史 - 使用LangChain的Message类型
-    messages: Annotated[list, add_messages] = Field(default=[])
+    messages: Annotated[list, add_or_replace_messages] = Field(default=[])
 
     # 当前用户输入
     user_input: str = ""

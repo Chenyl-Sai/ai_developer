@@ -20,6 +20,7 @@ from prompt_toolkit.keys import Keys
 
 from ai_dev.components.choice_window import ChoiceWindow
 from ai_dev.components.input_window import InputWindow
+from ai_dev.models.model_manager import ModelManager
 from ..core.assistant import AIProgrammingAssistant
 from ..core.global_state import GlobalState
 from ..core.config_manager import ConfigManager
@@ -144,6 +145,10 @@ class AdvancedCLI:
         # 初始化全局配置管理器
         config_manager = ConfigManager(self.working_directory)
         GlobalState.set_config_manager(config_manager)
+
+        # 初始化全局模型管理器
+        model_manager = ModelManager()
+        GlobalState.set_model_manager(model_manager)
 
         # 初始化命令注册表
         self.command_registry = self._initialize_command_registry()

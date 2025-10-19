@@ -4,7 +4,6 @@ SubAgentGraph - 基于LangGraph的ReAct结构子代理图
 
 import asyncio
 from typing import Dict, Any, List, Optional, Literal
-import time
 
 from langgraph.config import get_stream_writer
 from langgraph.graph import StateGraph, END
@@ -17,9 +16,9 @@ from .event_manager import event_manager, Event, EventType
 from .global_state import GlobalState
 from ..constants.product import MAIN_AGENT_NAME
 from ..models.state import AgentState
-from ai_dev.models.model_manager import ModelManager
 from ai_dev.permission.permission_manager import PermissionManager, PermissionDecision, UserPermissionChoice
 from ..utils.logger import agent_logger
+from ..utils.message import check_auto_compact
 
 
 class SubAgentState(AgentState):
@@ -56,10 +55,9 @@ class ReActAgent:
         self.tools = tools
 
         # 初始化模型管理器
-        self.model_manager = ModelManager()
-        self.model_name = model or self.model_manager.default_model
+        self.model_name = model or GlobalState.get_config_manager().get_default_model()
 
-        self.model = self.model_manager.get_model(self.model_name)
+        self.model = GlobalState.get_model_manager().get_model(self.model_name, tags=["main"])
 
         self.bound_model = self.model.bind_tools(self.tools)
 
@@ -133,18 +131,16 @@ class ReActAgent:
     async def _reason_node(self, state: SubAgentState):
         """推理节点 - 分析用户需求并决定下一步行动"""
 
-        # 如果第一条不是系统消息，拼接上系统消息
-        if state.messages and state.messages[0] and not isinstance(state.messages[0], SystemMessage):
-            state.messages = [self._build_system_message(), *state.messages]
-
-        # 流式获取模型响应 - 使用绑定了工具的模型
-        response_content = ""
-        full_message = None
+        messages = state.messages
+        # 对消息进行压缩
+        processed_messages, compacted = await check_auto_compact(messages)
+        if compacted:
+            messages = processed_messages
 
         # 调用模型前，如果有用户pending，拼接进去
         new_user_inputs = await self._process_user_input_pending(state)
         if new_user_inputs:
-            state.messages.extend(new_user_inputs)
+            messages.extend(new_user_inputs)
 
         # 调用模型之前判断是否有Event.INTERRUPT事件，如果有则返回退出标记
         if self._interrupted:
@@ -152,29 +148,16 @@ class ReActAgent:
                 "user_interrupted": True,
             }
 
-        # # 流式处理模型响应
-        # async for chunk in self.bound_model.astream(state.messages):
-        #     # 处理文本内容 - 实时产生消息流输出
-        #     if chunk.content:
-        #         response_content += chunk.content
-        #
-        #     # 拼接完成AI消息
-        #     if full_message is None:
-        #         full_message = chunk
-        #     else:
-        #         full_message = full_message + chunk
-        #
-        #     # 判断是否有Event.INTERRUPT事件，如果有则中断输出，直接退出
-        #     if self._interrupted:
-        #         return {
-        #             "user_interrupted": True,
-        #         }
-        #
-        full_message = await self.bound_model.ainvoke(state.messages)
+        # 不将系统消息拼接到state.message中，而是请求之前直接拼接
+        request_messages = [self._build_system_message()] + messages
+        ai_message = await self.bound_model.ainvoke(request_messages)
 
         return {
-            "tool_calls": full_message.tool_calls,
-            "messages": [*state.messages, full_message],
+            "tool_calls": ai_message.tool_calls,
+            "messages": ai_message if not compacted else {
+                "_replace": True,
+                "messages": messages + [ai_message]
+            },
             "current_iteration": state.current_iteration + 1
         }
 
@@ -450,6 +433,9 @@ class ReActAgent:
                     token: AIMessageChunk
                     metadata: dict
                     token, metadata = chunk
+                    # 压缩日志不显示到交互界面
+                    if "tags" in metadata and any(tag in ["compact"] for tag in metadata.get("tags")):
+                        continue
                     if isinstance(token, AIMessageChunk):
                         if full_response:
                             full_response += token
@@ -504,7 +490,6 @@ class ReActAgent:
                 elif stream_mode == "custom":
                     # 处理工具开始执行的消息
                     yield chunk
-
 
     async def get_graph_status(self, config) -> str:
         """获取当前图的执行状态"""

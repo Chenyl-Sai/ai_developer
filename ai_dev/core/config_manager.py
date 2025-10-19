@@ -32,27 +32,48 @@ class ConfigManager:
             "models": {
                 "deepseek-chat": {
                     "provider": "deepseek",
-                    "temperature": 0.1,
-                    "max_tokens": None,
-                    "timeout": 60
+                    "request":{
+                        "temperature": 0.1,
+                        "max_tokens": 8192,
+                        "timeout": 60
+                    },
+                    "max_context_tokens": 128000,
+                },
+                "gpt-5": {
+                    "provider": "openai",
+                    "request":{
+                        "temperature": 0.1,
+                        "max_tokens": 128000,
+                        "timeout": 60
+                    },
+                    "max_context_tokens": 400000,
                 },
                 "gpt-4o": {
                     "provider": "openai",
-                    "temperature": 0.1,
-                    "max_tokens": None,
-                    "timeout": 60
+                    "request":{
+                        "temperature": 0.1,
+                        "max_tokens": 16384,
+                        "timeout": 60
+                    },
+                    "max_context_tokens": 128000,
                 },
                 "gpt-4o-mini": {
                     "provider": "openai",
-                    "temperature": 0.1,
-                    "max_tokens": None,
-                    "timeout": 60
+                    "request":{
+                        "temperature": 0.1,
+                        "max_tokens": 16384,
+                        "timeout": 60
+                    },
+                    "max_context_tokens": 128000,
                 },
                 "gpt-3.5-turbo": {
                     "provider": "openai",
-                    "temperature": 0.1,
-                    "max_tokens": None,
-                    "timeout": 60
+                    "request":{
+                        "temperature": 0.1,
+                        "max_tokens": 4096,
+                        "timeout": 60
+                    },
+                    "max_context_tokens": 16358,
                 }
             },
             "api_keys": {
@@ -158,6 +179,10 @@ class ConfigManager:
     def get_model_config(self, model_name: str) -> Dict[str, Any]:
         """获取特定模型的配置"""
         return self.get(f"models.{model_name}", {})
+
+    def get_model_request_config(self, model_name: str) -> Dict[str, Any]:
+        """获取特定模型的请求配置"""
+        return self.get(f"models.{model_name}", {}).get("request", {})
 
     def get_api_key(self, provider: str) -> str:
         """获取API密钥"""

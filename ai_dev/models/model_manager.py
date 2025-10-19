@@ -8,14 +8,14 @@ from langchain_deepseek import ChatDeepSeek
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain.callbacks.tracers import LoggingCallbackHandler
 from ai_dev.core.global_state import GlobalState
+from ai_dev.utils.logger import agent_logger
 
 
 class ModelManager:
     """模型管理器，负责延迟模型选择和配置管理"""
 
-    def __init__(self, default_model: Optional[str] = None):
+    def __init__(self):
         # 从配置中获取默认模型
-        self.default_model = default_model or GlobalState.get_config_manager().get_default_model()
         self._cached_models: Dict[str, BaseChatModel] = {}
 
     def get_model(self, model_name: Optional[str] = None, **kwargs) -> BaseChatModel:
@@ -29,7 +29,7 @@ class ModelManager:
         Returns:
             BaseChatModel: 聊天模型实例
         """
-        model_name = model_name or self.default_model
+        model_name = model_name or GlobalState.get_config_manager().get_default_model()
 
         # 检查缓存
         cache_key = f"{model_name}_{str(kwargs)}"
@@ -55,7 +55,7 @@ class ModelManager:
         # 根据模型名称选择不同的聊天模型
         if model_name.startswith("deepseek"):
             return ChatDeepSeek(model=model_name,
-                                # callbacks=[LoggingCallbackHandler(logger=agent_logger.logger)],
+                                callbacks=[LoggingCallbackHandler(logger=agent_logger.logger)],
                                 **supported_params)
         else:
             return ChatOpenAI(model=model_name, **supported_params)
@@ -64,6 +64,7 @@ class ModelManager:
         """获取模型参数配置"""
         # 从配置管理器中获取模型配置
         model_config = GlobalState.get_config_manager().get_model_config(model_name)
+        model_request_config = GlobalState.get_config_manager().get_model_request_config(model_name)
 
         # 设置API密钥 - 只使用configManager中的配置
         provider = model_config.get("provider", "deepseek" if model_name.startswith("deepseek") else "openai")
@@ -75,9 +76,9 @@ class ModelManager:
                            f"1. 环境变量: {self._get_env_var_name(provider)}\n"
                            f"2. 配置文件: 在 .ai_dev/config.yaml 中配置 api_keys.{provider}")
 
-        model_config["api_key"] = api_key
+        model_request_config["api_key"] = api_key
 
-        return model_config
+        return model_request_config
 
     def _get_env_var_name(self, provider: str) -> str:
         """获取环境变量名称"""

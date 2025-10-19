@@ -173,7 +173,7 @@ class StreamTool(BaseTool):
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
         """格式化工具参数用于显示"""
-        args_str = ", ".join([f"{k}: {repr(v)}" for k, v in kwargs.items()])
+        args_str = ", ".join([f"{k}: {repr(v)}" for k, v in kwargs.items() if k not in ["context"]])
         return args_str
 
     def _get_success_message(self, llm_result) -> str:

@@ -63,7 +63,7 @@ class OutputWindow(CommonWindow):
             block = self.output_block_dict["message_" + chunk['message_id']]
             block.content += chunk['delta']
         elif chunk.get('type') == "message_end":
-            self.output_block_dict["message_" + chunk['message_id']]["status"] = "stop"
+            self.output_block_dict["message_" + chunk['message_id']].status = "stop"
 
         # 工具消息
         elif chunk.get('type') == "tool_start":
