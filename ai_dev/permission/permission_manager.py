@@ -57,6 +57,8 @@ class PermissionRequest:
     def get_display_info(self) -> Dict[str, Any]:
         """获取用于显示的权限请求信息"""
         info = {
+            "success": True,
+            "fail_reason": None,
             "type": "permission_request",
             "tool_name": self.tool_name,
             "tool_args": self.tool_args,
@@ -81,7 +83,9 @@ class PermissionRequest:
                 "file_name": file_name,
                 "content": self.tool_args.get("content", ""),
                 "display_type": "file_write",
-                "patch_info": patch_info
+                "patch_info": patch_info,
+                "success": patch_info.get("has_changes") == True,
+                "fail_reason": patch_info.get("reason"),
             })
         elif self.tool_name == "FileEditTool":
             file_path = self.tool_args.get("file_path")
@@ -103,7 +107,9 @@ class PermissionRequest:
                 "old_string": old_string,
                 "new_string": new_string,
                 "display_type": "file_edit",
-                "patch_info": patch_info
+                "patch_info": patch_info,
+                "success": patch_info.get("has_changes") == True,
+                "fail_reason": patch_info.get("reason"),
             })
         elif self.tool_name == "BashExecuteTool":
             info.update({
@@ -126,14 +132,14 @@ class PermissionRequest:
         from ai_dev.utils.patch import get_patch
 
         if not file_path:
-            return {"hunks": [], "has_changes": False}
+            return {"hunks": [], "has_changes": False, "reason": "file_path parameter is missing"}
 
         try:
             # 构建安全路径
             if is_edit:
                 safe_path = Path(file_path)
                 if not safe_path.exists() or not safe_path.is_file():
-                    return {"hunks": [], "has_changes": False}
+                    return {"hunks": [], "has_changes": False, "reason": "File not exist"}
 
                 # 读取文件内容
                 with open(safe_path, 'r', encoding='utf-8') as f:
@@ -147,7 +153,7 @@ class PermissionRequest:
 
                 # 检查old_string是否在文件中
                 if old_string not in file_content:
-                    return {"hunks": [], "has_changes": False}
+                    return {"hunks": [], "has_changes": False, "reason": "old_string not found in file content"}
 
                 # 生成patch
                 hunks = get_patch(file_path, file_content, old_string, new_string)
@@ -156,9 +162,9 @@ class PermissionRequest:
                 hunks = get_patch(file_path, "", "", new_string)
                 return {"hunks": hunks, "has_changes": True}
 
-        except Exception:
+        except Exception as e:
             # 如果出现任何错误，返回空patch
-            return {"hunks": [], "has_changes": False}
+            return {"hunks": [], "has_changes": False, "reason": str(e)}
 
 
 class PermissionManager:

@@ -1,52 +1,6 @@
-import uuid
+from langchain_core.messages import AnyMessage, AIMessage, SystemMessage, HumanMessage, AIMessageChunk
 
-from langchain_core.messages import AnyMessage, AIMessage, SystemMessage, HumanMessage
-from langgraph.config import get_stream_writer
-
-from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.logger import agent_logger
-
-INTERRUPT_MESSAGE = "[Request interrupted by user]"
-INTERRUPT_MESSAGE_FOR_TOOL_USE = "[Request interrupted by user for tool use]"
-
-AUTO_COMPACT_THRESHOLD_RATIO = 0.92
-
-async def check_auto_compact(messages: list[AnyMessage]) -> tuple[list[AnyMessage], bool]:
-    """检查是否需要压缩，如果需要则自动压缩"""
-    if not should_compact(messages):
-        return messages, False
-    writer = get_stream_writer()
-
-    message_id = "compact_" + str(uuid.uuid4())
-    writer({
-        "type": "message_start",
-        "message_id": message_id
-    })
-    writer({
-        "type": "message_delta",
-        "message_id": message_id,
-        "delta": "The context exceeds the threshold and compression begins…\n\n",
-    })
-
-    request_messages = [SystemMessage(
-        content="You are a helpful AI assistant tasked with creating comprehensive conversation summaries that preserve all essential context for continuing development work.")]
-    request_messages.extend(messages)
-    request_messages.append(HumanMessage(content=COMPRESSION_PROMPT))
-    model = GlobalState.get_model_manager().get_model(GlobalState.get_config_manager().get_default_model(), tags=["compact"])
-    ai_message = await model.ainvoke(request_messages)
-    agent_logger.info(f"Compact message finished, tokens: {count_tokens([ai_message])}")
-    writer({
-        "type": "message_delta",
-        "message_id": message_id,
-        "delta": "Context compression completed\n",
-    })
-    writer({
-        "type": "message_end",
-        "message_id": message_id
-    })
-    return [
-        HumanMessage(content="Context automatically compressed due to token limit. Essential information preserved."),
-        ai_message], True
 
 
 def count_tokens(messages: list[AnyMessage]) -> int:
@@ -56,43 +10,28 @@ def count_tokens(messages: list[AnyMessage]) -> int:
             return message.usage_metadata.get("total_tokens", 0)
     return 0
 
+def estimate_token_for_chunk_message(message: AIMessageChunk) -> float:
+    content_tokens = 0
+    tool_call_tokens = 0
+    try:
+        if message.content:
+            content = message.content
+            chinese_chars = sum(1 for char in content if '\u4e00' <= char <= '\u9fff')
+            english_chars = len(content) - chinese_chars
+            content_tokens = int(chinese_chars * 1.5 + english_chars * 0.25)
 
-def should_compact(messages: list[AnyMessage]) -> bool:
-    token_count = count_tokens(messages)
-    max_tokens = GlobalState.get_config_manager().get_model_config(
-        GlobalState.get_config_manager().get_default_model()).get("max_context_tokens", 128000)
-    auto_compact_threshold = max_tokens * AUTO_COMPACT_THRESHOLD_RATIO
-    compact = token_count >= auto_compact_threshold
-    if compact:
-        agent_logger.info(f"Compact message detected, total tokens: {token_count}, max tokens: {max_tokens}")
-    return compact
+        if message.additional_kwargs and message.additional_kwargs.get("tool_calls"):
+            for tool_call in message.additional_kwargs.get("tool_calls", []):
+                func = tool_call.get("function", {})
+                if func:
+                    arguments = func.get("arguments", "")
+                    name = func.get("name", "")
+                    total = arguments if arguments else "" + name if name else ""
+                    tool_chinese_chars = sum(1 for char in total if '\u4e00' <= char <= '\u9fff')
+                    tool_english_chars = len(total) - tool_chinese_chars
+                    tool_call_tokens += tool_chinese_chars * 1.5 + tool_english_chars * 0.25
+    except Exception as e:
+        agent_logger.error("estimate token error", exception=e, context={"message": message})
+        pass
 
-
-# 8步压缩法提示词
-COMPRESSION_PROMPT = """Please provide a comprehensive summary of our conversation structured as follows:
-
-## Technical Context
-Development environment, tools, frameworks, and configurations in use. Programming languages, libraries, and technical constraints. File structure, directory organization, and project architecture.
-
-## Project Overview  
-Main project goals, features, and scope. Key components, modules, and their relationships. Data models, APIs, and integration patterns.
-
-## Code Changes
-Files created, modified, or analyzed during our conversation. Specific code implementations, functions, and algorithms added. Configuration changes and structural modifications.
-
-## Debugging & Issues
-Problems encountered and their root causes. Solutions implemented and their effectiveness. Error messages, logs, and diagnostic information.
-
-## Current Status
-What we just completed successfully. Current state of the codebase and any ongoing work. Test results, validation steps, and verification performed.
-
-## Pending Tasks
-Immediate next steps and priorities. Planned features, improvements, and refactoring. Known issues, technical debt, and areas needing attention.
-
-## User Preferences
-Coding style, formatting, and organizational preferences. Communication patterns and feedback style. Tool choices and workflow preferences.
-
-## Key Decisions
-Important technical decisions made and their rationale. Alternative approaches considered and why they were rejected. Trade-offs accepted and their implications.
-
-Focus on information essential for continuing the conversation effectively, including specific details about code, files, errors, and plans."""
+    return content_tokens + tool_call_tokens

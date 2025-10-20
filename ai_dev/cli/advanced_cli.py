@@ -394,8 +394,6 @@ class AdvancedCLI:
 
         # 启动输出处理循环
         output_task = asyncio.create_task(self._output_processing_loop())
-        # 启动输出面板缓存刷新
-        refresh_output_cache_task = asyncio.create_task(self.output_window.refresh_output_cache_loop())
         # 补偿Pending消息消费循环
         compensation_pending_task = asyncio.create_task(self.output_window.compensation_pending_input_loop())
 
@@ -419,7 +417,7 @@ class AdvancedCLI:
                 'common.blue': '#3366FF',
                 'common.red': '#FF6B6B',
                 'common.purple': '#8B5CF6',
-                'common.pink': '#FF1493',
+                'common.pink': '#FADBD8',
 
                 'tool.patch.line_number': '#cccccc',
                 'tool.patch.line_number.removed': '#cccccc',
@@ -484,12 +482,6 @@ class AdvancedCLI:
             output_task.cancel()
             try:
                 await output_task
-            except asyncio.CancelledError:
-                pass
-
-            refresh_output_cache_task.cancel()
-            try:
-                await refresh_output_cache_task
             except asyncio.CancelledError:
                 pass
 

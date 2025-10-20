@@ -55,7 +55,7 @@ class ModelManager:
         # 根据模型名称选择不同的聊天模型
         if model_name.startswith("deepseek"):
             return ChatDeepSeek(model=model_name,
-                                callbacks=[LoggingCallbackHandler(logger=agent_logger.logger)],
+                                # callbacks=[LoggingCallbackHandler(logger=agent_logger.logger)],
                                 **supported_params)
         else:
             return ChatOpenAI(model=model_name, **supported_params)

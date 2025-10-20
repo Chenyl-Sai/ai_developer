@@ -18,7 +18,8 @@ from ..constants.product import MAIN_AGENT_NAME
 from ..models.state import AgentState
 from ai_dev.permission.permission_manager import PermissionManager, PermissionDecision, UserPermissionChoice
 from ..utils.logger import agent_logger
-from ..utils.message import check_auto_compact
+from ..utils.compact import check_auto_compact
+from ..utils.message import estimate_token_for_chunk_message
 
 
 class SubAgentState(AgentState):
@@ -204,44 +205,53 @@ class ReActAgent:
         # 如果有需要询问的工具调用，循环处理每个ASK请求
         user_refuse = False
         for tool_call, request in ask_requests:
+            choice = None
             # 如果用户没有拒绝过，则循环请求用户授权
             if not user_refuse:
                 interrupt_info = request.get_display_info()
                 agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 向用户请求权限确认: {interrupt_info}")
-
-                # 触发中断，等待用户选择
-                user_choice = interrupt(interrupt_info)
-
-                # 映射用户选择
-                if user_choice == "1":
-                    choice = UserPermissionChoice.ALLOW_ONCE
-                    agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 仅本次允许")
-                elif user_choice == "2":
-                    choice = UserPermissionChoice.ALLOW_SESSION
-                    agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 本次会话允许")
+                if not interrupt_info.get("success", False):
+                    reason = interrupt_info.get("fail_reason")
+                    error_message = ToolMessage(
+                        content=reason,
+                        tool_call_id=tool_call.get("id"),
+                    )
+                    state.messages.append(error_message)
                 else:
-                    choice = UserPermissionChoice.DENY
-                    agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 拒绝")
+                    # 触发中断，等待用户选择
+                    user_choice = interrupt(interrupt_info)
+
+                    # 映射用户选择
+                    if user_choice == "1":
+                        choice = UserPermissionChoice.ALLOW_ONCE
+                        agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 仅本次允许")
+                    elif user_choice == "2":
+                        choice = UserPermissionChoice.ALLOW_SESSION
+                        agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 本次会话允许")
+                    else:
+                        choice = UserPermissionChoice.DENY
+                        agent_logger.debug(f"[PERMISSION_DEBUG] Agent {state.agent_id} 用户选择: 拒绝")
             else:
                 # 如果用户拒绝过一个，则整个流程结束，下面所有的权限请求直接标记为拒绝
                 choice = UserPermissionChoice.DENY
 
             # 应用用户选择并决定是否允许执行
-            is_allowed = self.permission_manager.apply_user_choice(request, choice)
-            if is_allowed:
-                agent_logger.debug(
-                    f"[PERMISSION_DEBUG] Agent {state.agent_id} 工具 {tool_call['name']} 用户确认允许执行")
-                allowed_tool_calls.append(tool_call)
-            else:
-                user_refuse = True
-                agent_logger.debug(
-                    f"[PERMISSION_DEBUG] Agent {state.agent_id} 工具 {tool_call['name']} 用户确认拒绝执行")
-                denied_tool_calls.append(tool_call)
-                error_message = ToolMessage(
-                    content=f"权限被拒绝: {tool_call['name']}",
-                    tool_call_id=tool_call.get("id"),
-                )
-                state.messages.append(error_message)
+            if choice is not None:
+                is_allowed = self.permission_manager.apply_user_choice(request, choice)
+                if is_allowed:
+                    agent_logger.debug(
+                        f"[PERMISSION_DEBUG] Agent {state.agent_id} 工具 {tool_call['name']} 用户确认允许执行")
+                    allowed_tool_calls.append(tool_call)
+                else:
+                    user_refuse = True
+                    agent_logger.debug(
+                        f"[PERMISSION_DEBUG] Agent {state.agent_id} 工具 {tool_call['name']} 用户确认拒绝执行")
+                    denied_tool_calls.append(tool_call)
+                    error_message = ToolMessage(
+                        content=f"权限被拒绝: {tool_call['name']}",
+                        tool_call_id=tool_call.get("id"),
+                    )
+                    state.messages.append(error_message)
         if user_refuse:
             # 返回用户拒绝,结束图的执行
             return {
@@ -427,6 +437,7 @@ class ReActAgent:
             stream = self.graph.astream(state, config=config, stream_mode=["updates", "messages", "custom"])
         if stream:
             full_response = None
+            token_count = 0.0
             async for stream_mode, chunk in stream:
                 # 处理messages流输出 - 来自reason节点的模型实时输出
                 if stream_mode == "messages":
@@ -454,20 +465,37 @@ class ReActAgent:
                                         "type": "message_start",
                                         "message_id": token.id,
                                     }
+                                else:
+                                    # 工具调用也发送消息
+                                    # 预估token数量
+                                    token_count += estimate_token_for_chunk_message(token)
+                                    yield {
+                                        "type": "message_delta",
+                                        "message_id": token.id,
+                                        "delta": "",
+                                        "estimate_tokens": int(token_count)
+                                    }
+
                             else:
                                 # 记录模型响应信息
                                 agent_logger.log_model_response(state.agent_id, self.model_name, full_response)
+                                # 清空
+                                full_response = None
+                                token_count = 0
                                 # 结束消息
                                 yield {
-                                    "type": "message_stop",
+                                    "type": "message_end",
                                     "message_id": token.id,
                                 }
                         else:
+                            # 预估token数量
+                            token_count += estimate_token_for_chunk_message(token)
                             # 消息
                             yield {
                                 "type": "message_delta",
                                 "message_id": token.id,
                                 "delta": content,
+                                "estimate_tokens": int(token_count)
                             }
 
 

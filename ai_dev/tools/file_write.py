@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
 from ai_dev.utils.patch import get_patch
 from ai_dev.core.global_state import GlobalState
+from ai_dev.utils.freshness import update_agent_edit_time, check_freshness
 
 DESCRIPTION = """Write a file to the local filesystem. Overwrites the existing file if there is one.
 
@@ -50,6 +51,13 @@ class FileWriteTool(StreamTool):
 
         safe_path = self._safe_join_path(file_path)
         old_file_exists = safe_path.exists()
+        
+        # 如果文件已存在，检查是否被读取过
+        if old_file_exists:
+            need_refresh, reason = check_freshness(str(safe_path))
+            if need_refresh:
+                raise ValueError(f"修改失败: {reason}")
+        
         enc = detect_file_encoding(str(safe_path)) if old_file_exists else "utf-8"
         endings = detect_line_endings_direct(str(safe_path), encoding=enc) if old_file_exists else "LR"
 
@@ -63,6 +71,10 @@ class FileWriteTool(StreamTool):
 
         # 写文件
         write_text_content(str(safe_path), content, enc, endings)
+        
+        # 更新agent修改时间
+        if old_file_exists:
+            update_agent_edit_time(str(safe_path))
 
         patch = get_patch(
             file_path=file_path,

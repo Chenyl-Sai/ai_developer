@@ -3,7 +3,7 @@ from ai_dev.utils.git import get_is_git
 from datetime import datetime
 from ai_dev.utils.env import env
 from ai_dev.constants.product import PRODUCT_NAME, PRODUCT_COMMAND, PROJECT_FILE
-from ai_dev.utils.message import INTERRUPT_MESSAGE, INTERRUPT_MESSAGE_FOR_TOOL_USE
+from ai_dev.utils.compact import INTERRUPT_MESSAGE, INTERRUPT_MESSAGE_FOR_TOOL_USE
 
 
 async def get_env_info_prompt():

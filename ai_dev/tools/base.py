@@ -144,7 +144,7 @@ class StreamTool(BaseTool):
                         "result": llm_result,
                         "context": context
                     })
-
+            agent_logger.log_tool_result(context.get("agent_id"), self.name, str(llm_result), True)
             return llm_result
 
         except Exception as e:
@@ -157,6 +157,7 @@ class StreamTool(BaseTool):
                 "status": "error",
                 "context": context
             })
+            agent_logger.log_tool_result(context.get("agent_id"), self.name, str(e), False)
             raise e
 
     def _send_tool_start_event(self):

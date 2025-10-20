@@ -8,9 +8,7 @@ from pydantic import BaseModel, Field
 from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
 from ai_dev.utils.patch import get_patch
 from ai_dev.core.global_state import GlobalState
-
-from .file_list import FileListTool
-from .file_read import FileReadTool
+from ai_dev.utils.freshness import check_freshness, update_agent_edit_time
 
 
 class FileEditTool(StreamTool):
@@ -96,11 +94,20 @@ Remember: when making multiple file edits in a row to the same file, you should 
         # 参数校验
         self._verify_input(file_path, old_string, new_string)
 
+        # 新鲜度检查 - 在修改前检查文件是否已被外部修改
+        if old_file_exists:
+            need_refresh, reason = check_freshness(str(safe_path))
+            if need_refresh:
+                raise ValueError(f"修改失败: {reason}")
+
         # 生成patch及修改文件全部内容
         patch, original_file, update_file = self._apply_edit(file_path, old_string, new_string)
 
         # 写文件
         write_text_content(str(safe_path), update_file, enc, endings)
+        
+        # 更新agent修改时间
+        update_agent_edit_time(str(safe_path))
 
         result_data = {
             "file_path": str(safe_path.relative_to(GlobalState.get_working_directory())),

@@ -7,6 +7,7 @@ from .base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 
 from ..core.global_state import GlobalState
+from ai_dev.utils.freshness import update_read_time
 
 MAX_LINES_TO_READ = 2000
 MAX_LINE_LENGTH = 2000
@@ -72,6 +73,9 @@ class FileReadTool(StreamTool):
                 processed_lines.append(line)
 
         content = "".join(processed_lines)
+
+        # 更新文件读取时间
+        update_read_time(str(safe_path))
 
         result_data = {
             "file_path": str(safe_path.relative_to(GlobalState.get_working_directory())),

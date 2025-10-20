@@ -1,10 +1,9 @@
 from prompt_toolkit.formatted_text import FormattedText, AnyFormattedText, HTML, merge_formatted_text
 from typing import Any, TypedDict, Union
 from pydantic import BaseModel
+from async_lru import alru_cache
 
-import ast
-from ai_dev.constants.product import MAIN_AGENT_NAME
-from ai_dev.utils.todo import get_todos, TodoItemStorage
+from ai_dev.utils.todo import TodoItemStorage
 from ai_dev.utils.logger import agent_logger
 
 
@@ -32,7 +31,8 @@ class ToolBlock(BaseModel):
 OutputBlock = Union[str, tuple[str, str], InputBlock, MessageBlock, ToolBlock]
 
 
-def format_ai_output(text):
+@alru_cache(maxsize=100)
+async def format_ai_output(text):
     """将Markdown文本转换为ANSI格式用于终端显示
     
     Args:
@@ -41,6 +41,10 @@ def format_ai_output(text):
     Returns:
         ANSI: prompt_toolkit的ANSI格式对象
     """
+    if not text or not text.strip():
+        from prompt_toolkit.formatted_text import ANSI
+        return ANSI("")
+    
     from rich.console import Console
     from rich.markdown import Markdown
     from io import StringIO
@@ -66,7 +70,8 @@ async def format_output_block(block: OutputBlock) -> AnyFormattedText:
     # AI回复
     elif isinstance(block, MessageBlock):
         prefix = FormattedText([("fg:white", "⏺ ")])
-        return merge_formatted_text([prefix, format_ai_output(block.content)])
+        formatted_content = await format_ai_output(block.content)
+        return merge_formatted_text([prefix, formatted_content])
     # 工具执行
     elif isinstance(block, ToolBlock):
         return await format_tool_block(block)
@@ -75,30 +80,37 @@ async def format_output_block(block: OutputBlock) -> AnyFormattedText:
 async def format_tool_block(block: ToolBlock) -> AnyFormattedText:
     tool_status = block.status
     # 工具开始执行 & 执行过程中
+    html_text = None
     if tool_status == "start":
         # 展示标题
         html_text = f"<style fg='#000000'>⏺</style> <bold>{block.tool_name}</bold>"
         if block.tool_args:
-            html_text += f"({block.tool_args})"
+            escaped_message = _smart_escape_html(block.tool_args)
+            html_text += f"({escaped_message})"
         html_text += "\n"
         # 展示过程中的额外消息
         if block.message:
-            html_text += f"  ⎿  {block.message}"
+            # 智能转义：只转义非HTML标签的内容
+            escaped_message = _smart_escape_html(block.message)
+            html_text += f"  ⎿  {escaped_message}"
         else:
             html_text += f"  ⎿  Doing…"
-        return HTML(html_text)
+        return _safe_html_render(html_text, block)
     # 工具执行成功
     elif tool_status == "success":
         # 展示标题，图标变色
         html_text = f"<style fg='#33ff66'>⏺</style> <bold>{block.tool_name}</bold>"
         if block.tool_args:
-            html_text += f"({block.tool_args})"
+            escaped_message = _smart_escape_html(block.tool_args)
+            html_text += f"({escaped_message})"
         html_text += "\n"
         # 展示总结性的信息
         if block.message:
-            html_text += f"  ⎿  {block.message}"
+            # 智能转义：只转义非HTML标签的内容
+            escaped_message = _smart_escape_html(block.message)
+            html_text += f"  ⎿  {escaped_message}"
         html_text += "\n"
-        html = HTML(html_text)
+        html = _safe_html_render(html_text, block)
         # 对于一些特殊的工具需要展示执行的详情
         detail = await format_tool_exec_detail(block)
         if detail:
@@ -110,15 +122,18 @@ async def format_tool_block(block: ToolBlock) -> AnyFormattedText:
         # 展示标题，图标变色
         html_text = f"<style fg='#ff0000'>⏺</style> <bold>{block.tool_name}</bold>"
         if block.tool_args:
-            html_text += f"({block.tool_args})"
+            escaped_message = _smart_escape_html(block.tool_args)
+            html_text += f"({escaped_message})"
         html_text += "\n"
         # 展示总结性的信息
         if block.message:
-            html_text += f"  ⎿  <style fg='#ff0000'>{block.message}</style>"
+            # 智能转义：只转义非HTML标签的内容
+            escaped_message = _smart_escape_html(block.message)
+            html_text += f"  ⎿  <style fg='#ff0000'>{escaped_message}</style>"
         else:
             html_text += f"  ⎿  <style fg='#ff0000'>Error</style>"
         html_text += "\n"
-        html = HTML(html_text)
+        html = _safe_html_render(html_text, block)
         # 对于一些特殊的工具需要展示执行的详情
         detail = await format_tool_exec_detail(block)
         if detail:
@@ -295,6 +310,63 @@ def format_todo_list(todos: list[TodoItemStorage]) -> FormattedText:
                     else:
                         result.append(("", f"  ☐ {todo.content}\n"))
     return FormattedText(result)
+
+
+def _smart_escape_html(text: str) -> str:
+    """智能转义HTML：只转义非HTML标签的内容
+    
+    保留合法的HTML标签（如<bold>, <style>等），只转义其他内容中的特殊字符
+    """
+    if not text:
+        return ""
+    
+    import re
+    
+    # 定义合法的HTML标签模式
+    html_tag_pattern = r'<(/?)(style|bold|italic|underline|ansired|ansigreen|ansiyellow|ansiblue|ansimagenta|ansicyan|ansigray|ansibrightred|ansibrightgreen|ansibrightyellow|ansibrightblue|ansibrightmagenta|ansibrightcyan|ansibrightwhite|fg|bg|b)[^>]*>'
+    
+    # 将文本分割为HTML标签和非标签部分
+    parts = []
+    last_end = 0
+    
+    for match in re.finditer(html_tag_pattern, text):
+        # 添加标签前的普通文本
+        if match.start() > last_end:
+            plain_text = text[last_end:match.start()]
+            # 转义普通文本中的特殊字符
+            escaped_text = plain_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            parts.append(escaped_text)
+        
+        # 添加HTML标签（不转义）
+        parts.append(match.group(0))
+        last_end = match.end()
+    
+    # 添加剩余的普通文本
+    if last_end < len(text):
+        plain_text = text[last_end:]
+        escaped_text = plain_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        parts.append(escaped_text)
+    
+    return ''.join(parts)
+
+
+def _safe_html_render(html_text: str, block: ToolBlock) -> AnyFormattedText:
+    """安全的HTML渲染，包含错误处理和实时反馈"""
+    try:
+        return HTML(html_text)
+    except Exception as e:
+        # 记录详细错误信息
+        error_msg = f"HTML渲染错误: {str(e)}"
+        agent_logger.error(f"Failed to render tool block {block.tool_name}: {e}")
+        agent_logger.debug(f"Problematic HTML: {html_text}")
+        
+        # 返回包含错误信息的格式化文本
+        return FormattedText([
+            ("class:common.red", f"⏺ {block.tool_name}"),
+            ("", "\n"),
+            ("class:common.red", f"  ⎿ 渲染错误: {str(e)}"),
+            ("", "\n")
+        ])
 
 
 def _format_multiline_text(text, first_line_prefix="  ⎿ ", other_lines_prefix="    ", max_show_line=10):
