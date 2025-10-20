@@ -7,7 +7,7 @@ from ai_dev.components.scrollable_formatted_text_control import ScrollableFormat
 from prompt_toolkit.formatted_text import FormattedText, merge_formatted_text
 from prompt_toolkit.layout import Window
 
-from ai_dev.constants.product import MAIN_AGENT_NAME
+from ai_dev.constants.product import MAIN_AGENT_ID
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.render import OutputBlock, InputBlock, MessageBlock, ToolBlock, format_output_block
 from ai_dev.components.common_window import CommonWindow
@@ -114,7 +114,7 @@ class OutputWindow(CommonWindow):
         elif chunk.get('type') == "tool_end":
             # 对于待办工具使用做特殊处理
             if chunk.get("tool_name") == "TodoWriteTool":
-                agent_id = MAIN_AGENT_NAME
+                agent_id = MAIN_AGENT_ID
                 context = chunk.get("context", {})
                 if context and "agent_id" in context:
                     if len(context.get("agent_id")) > 0:

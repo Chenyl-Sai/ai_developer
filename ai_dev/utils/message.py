@@ -20,16 +20,14 @@ def estimate_token_for_chunk_message(message: AIMessageChunk) -> float:
             english_chars = len(content) - chinese_chars
             content_tokens = int(chinese_chars * 1.5 + english_chars * 0.25)
 
-        if message.additional_kwargs and message.additional_kwargs.get("tool_calls"):
-            for tool_call in message.additional_kwargs.get("tool_calls", []):
-                func = tool_call.get("function", {})
-                if func:
-                    arguments = func.get("arguments", "")
-                    name = func.get("name", "")
-                    total = arguments if arguments else "" + name if name else ""
-                    tool_chinese_chars = sum(1 for char in total if '\u4e00' <= char <= '\u9fff')
-                    tool_english_chars = len(total) - tool_chinese_chars
-                    tool_call_tokens += tool_chinese_chars * 1.5 + tool_english_chars * 0.25
+        if message.tool_call_chunks:
+            for tool_call_chunk in message.tool_call_chunks:
+                arguments = tool_call_chunk.get("args", "")
+                name = tool_call_chunk.get("name", "")
+                total = arguments if arguments else "" + name if name else ""
+                tool_chinese_chars = sum(1 for char in total if '\u4e00' <= char <= '\u9fff')
+                tool_english_chars = len(total) - tool_chinese_chars
+                tool_call_tokens += tool_chinese_chars * 1.5 + tool_english_chars * 0.25
     except Exception as e:
         agent_logger.error("estimate token error", exception=e, context={"message": message})
         pass

@@ -32,7 +32,7 @@ from ..commands.agents import AgentsCommand
 from ..commands.help import HelpCommand
 from ..utils.logger import agent_logger
 from ..components.output_capture import OutputCapture
-from ai_dev.constants.product import MAIN_AGENT_NAME
+from ai_dev.constants.product import MAIN_AGENT_ID
 from ai_dev.components.output_window import OutputWindow
 
 class AdvancedCLI:
@@ -289,7 +289,7 @@ class AdvancedCLI:
             await self.output_window.add_common_block("class:error", "助手未初始化")
             return
 
-        agent_logger.log_agent_start(MAIN_AGENT_NAME, user_input)
+        agent_logger.log_agent_start(MAIN_AGENT_ID, user_input)
 
         try:
 
@@ -324,7 +324,7 @@ class AdvancedCLI:
 
         except Exception as e:
             await self.output_window.add_common_block("class:error", f"处理流时出错: {str(e)}")
-            agent_logger.log_agent_error(MAIN_AGENT_NAME, str(e), e, {
+            agent_logger.log_agent_error(MAIN_AGENT_ID, str(e), e, {
                 "user_input": user_input,
                 "stage": "stream_processing"
             })

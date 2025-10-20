@@ -130,6 +130,7 @@ assistant: "I'm going to use the Task tool to launch the with the greeting-respo
 
         # 创建子智能体
         sub_agent = ReActAgent(
+            name=agent_name,
             system_prompt=system_prompt,
             tools=sub_agent_tools,
             model=sub_agent_config.model,

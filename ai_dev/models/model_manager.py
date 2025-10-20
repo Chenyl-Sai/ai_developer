@@ -6,9 +6,7 @@ from typing import Optional, Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_deepseek import ChatDeepSeek
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain.callbacks.tracers import LoggingCallbackHandler
 from ai_dev.core.global_state import GlobalState
-from ai_dev.utils.logger import agent_logger
 
 
 class ModelManager:
@@ -55,7 +53,6 @@ class ModelManager:
         # 根据模型名称选择不同的聊天模型
         if model_name.startswith("deepseek"):
             return ChatDeepSeek(model=model_name,
-                                # callbacks=[LoggingCallbackHandler(logger=agent_logger.logger)],
                                 **supported_params)
         else:
             return ChatOpenAI(model=model_name, **supported_params)

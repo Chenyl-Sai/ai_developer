@@ -164,10 +164,10 @@ class AgentLogger:
                 sanitized_result = self._sanitize_content(str(result))
                 self.logger.debug(f"[TOOL_RESULT_DETAIL] Agent: {agent_id}, 工具: {tool_name}, 完整结果: {sanitized_result}")
 
-    def log_model_call(self, agent_id: str, model_name: str, input_length: int, conversation_history: list = None):
+    def log_model_call(self, agent_id: str, model_name: str, conversation_history: list = None):
         """记录模型调用"""
         if self.logger:
-            self.logger.info(f"[MODEL_CALL] Agent: {agent_id}, 模型: {model_name}, 输入长度: {input_length}")
+            self.logger.info(f"[MODEL_CALL] Agent: {agent_id}, 模型: {model_name}")
 
             # 记录详细的对话历史
             if conversation_history:

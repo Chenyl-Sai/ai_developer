@@ -9,7 +9,7 @@ from .re_act_agent import ReActAgent, SubAgentState
 from ..constants.prompt import get_system_prompt
 from ..utils.logger import agent_logger
 from ..utils.tool import get_available_tools
-from ai_dev.constants.product import MAIN_AGENT_NAME
+from ai_dev.constants.product import MAIN_AGENT_ID, MAIN_AGENT_NAME
 
 
 class AIProgrammingAssistant:
@@ -34,6 +34,7 @@ class AIProgrammingAssistant:
                 self.system_prompt = await get_system_prompt()
 
             self.main_agent = ReActAgent(
+                name=MAIN_AGENT_NAME,
                 system_prompt=self.system_prompt,
                 tools=await get_available_tools(),
                 context={
@@ -52,13 +53,10 @@ class AIProgrammingAssistant:
             config = {
                 "configurable": {
                     "thread_id": thread_id,
-                    "agent_id": MAIN_AGENT_NAME
+                    "agent_id": MAIN_AGENT_ID
                 },
                 "recursion_limit": 1000
             }
-
-            # 记录模型调用
-            agent_logger.log_model_call(MAIN_AGENT_NAME, self.main_agent.model_name, len(user_input))
 
             # 使用真正的流式输出，传递thread_id配置
             async for chunk in self.main_agent.run_stream(user_input, config=config):
@@ -67,7 +65,7 @@ class AIProgrammingAssistant:
 
         except Exception as e:
             error_msg = f"处理过程中出现错误: {str(e)}"
-            agent_logger.log_agent_error(MAIN_AGENT_NAME, error_msg, e, {
+            agent_logger.log_agent_error(MAIN_AGENT_ID, error_msg, e, {
                 "user_input": user_input,
                 "stage": "agent_processing"
             })

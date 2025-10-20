@@ -35,6 +35,7 @@ class ReActAgent:
 
     def __init__(
             self,
+            name: str,
             system_prompt: list[str],
             tools: List[BaseTool],
             context: Optional[Dict[str, Any]] = None,
@@ -49,6 +50,7 @@ class ReActAgent:
             context: 上下文信息
             model: 使用的模型名称
         """
+        self.name = name
         self.system_prompt = system_prompt
         self.context = context or {}
 
@@ -151,7 +153,10 @@ class ReActAgent:
 
         # 不将系统消息拼接到state.message中，而是请求之前直接拼接
         request_messages = [self._build_system_message()] + messages
+        agent_logger.log_model_call(state.agent_id, self.model_name, request_messages)
         ai_message = await self.bound_model.ainvoke(request_messages)
+        # 记录模型响应信息
+        agent_logger.log_model_response(state.agent_id, self.model_name, ai_message)
 
         return {
             "tool_calls": ai_message.tool_calls,
@@ -359,7 +364,7 @@ class ReActAgent:
     async def _process_user_input_pending(self, state: SubAgentState) -> list[HumanMessage]:
         """处理用户输入排队消息"""
         user_messages = []
-        if state.agent_id == MAIN_AGENT_NAME:
+        if self.name == MAIN_AGENT_NAME:
             user_inputs = await GlobalState.get_user_input_queue().pop_all()
             if user_inputs and len(user_inputs) > 0:
                 for user_input in user_inputs:
@@ -436,7 +441,6 @@ class ReActAgent:
             state.messages = [HumanMessage(content=user_input)]
             stream = self.graph.astream(state, config=config, stream_mode=["updates", "messages", "custom"])
         if stream:
-            full_response = None
             token_count = 0.0
             async for stream_mode, chunk in stream:
                 # 处理messages流输出 - 来自reason节点的模型实时输出
@@ -448,18 +452,12 @@ class ReActAgent:
                     if "tags" in metadata and any(tag in ["compact"] for tag in metadata.get("tags")):
                         continue
                     if isinstance(token, AIMessageChunk):
-                        if full_response:
-                            full_response += token
-                        else:
-                            full_response = token
-
                         content = token.content
                         usage = token.usage_metadata
                         if content is None or content == "":
                             if not usage:
                                 # 有时候模型不返回content，只返回ToolCall，这时候不是start消息，不需要向前端写东西了
-                                if not token.additional_kwargs:
-                                    agent_logger.debug(f"token: {token}")
+                                if not token.tool_call_chunks:
                                     # 开始消息
                                     yield {
                                         "type": "message_start",
@@ -477,10 +475,7 @@ class ReActAgent:
                                     }
 
                             else:
-                                # 记录模型响应信息
-                                agent_logger.log_model_response(state.agent_id, self.model_name, full_response)
                                 # 清空
-                                full_response = None
                                 token_count = 0
                                 # 结束消息
                                 yield {

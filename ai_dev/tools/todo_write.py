@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from . import StreamTool
 from pydantic import BaseModel, Field
-from ai_dev.constants.product import MAIN_AGENT_NAME
+from ai_dev.constants.product import MAIN_AGENT_ID
 from .base import CommonToolArgs
 
 
@@ -120,7 +120,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         self._verify_input(todos)
 
         # 保存待办 - 从kwargs中获取agent_id，如果不存在则使用默认值
-        agent_id = kwargs.get("context", {}).get("agent_id", MAIN_AGENT_NAME) if "context" in kwargs else MAIN_AGENT_NAME
+        agent_id = kwargs.get("context", {}).get("agent_id", MAIN_AGENT_ID) if "context" in kwargs else MAIN_AGENT_ID
 
         from ..utils.todo import set_todos, delete_todo_file_if_need
         stored_todo_items = asyncio.run(set_todos(todos, agent_id))
