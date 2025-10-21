@@ -22,9 +22,11 @@ class ChoiceWindow(CommonWindow):
         self.choice_control = ScrollableFormattedTextControl(
             self._get_choice_text,
             focusable=True,
+            cli = self.cli
         )
         self.window = Window(
-            content=self.choice_control
+            content=self.choice_control,
+            always_hide_cursor=True,
         )
         self.show_choice=False
         self.choice_kb = KeyBindings()
@@ -54,25 +56,15 @@ class ChoiceWindow(CommonWindow):
             key = event.key_sequence[0].key
             asyncio.create_task(self._handle_choice_input(key))
 
-        @self.choice_kb.add(Keys.Escape)
-        def handle_escape(event):
-            asyncio.create_task(self._handle_choice_input("3"))
-
         @self.choice_kb.add(Keys.Up)
         def handle_choice_up(event):
-            # 优先滚动
-            if self.choice_control and self.choice_control.scroll_up():
-                event.app.invalidate()
-            # 无法滚动了调整选项
-            elif self.current_choice_index > 0:
+            if self.current_choice_index > 0:
                 self.current_choice_index -= 1
                 event.app.invalidate()
 
         @self.choice_kb.add(Keys.Down)
         def handle_choice_down(event):
-            if self.choice_control and self.choice_control.scroll_down():
-                event.app.invalidate()
-            elif self.current_choice_index < len(self.choice_options) - 1:
+            if self.current_choice_index < len(self.choice_options) - 1:
                 self.current_choice_index += 1
                 event.app.invalidate()
 

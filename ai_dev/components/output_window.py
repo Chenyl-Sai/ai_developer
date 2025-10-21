@@ -27,6 +27,7 @@ class OutputWindow(CommonWindow):
         self.output_control = ScrollableFormattedTextControl(
             self._get_full_output_text,
             focusable=True,
+            cli = self.cli
         )
         self.window = Window(
             content=self.output_control,
@@ -81,7 +82,7 @@ class OutputWindow(CommonWindow):
         """向输出面板添加流式输出的内容"""
         # AI 消息
         if chunk.get('type') == "message_start":
-            block = MessageBlock(id=chunk['message_id'], content="", status="start")
+            block = MessageBlock(id=chunk['message_id'], content=" ", status="start")
             self.output_blocks.append(block)
             self.output_block_dict["message_" + chunk['message_id']] = block
             # 开始跟踪模型输出进度
@@ -179,7 +180,7 @@ class OutputWindow(CommonWindow):
         for block in self.output_blocks:
             result.append(await format_output_block(block))
             # 每个block之间添加一个换行
-            result.append(FormattedText([("", "\n")]))
+            result.append(FormattedText([("", " \n")]))
         return result
 
     async def _get_user_input_pending_part(self):
@@ -189,7 +190,7 @@ class OutputWindow(CommonWindow):
 
         if user_pending_inputs and len(user_pending_inputs) > 0:
             # 先来俩换行
-            user_input_pending_parts.append(FormattedText([('', "\n\n")]))
+            user_input_pending_parts.append(FormattedText([('', " \n \n")]))
             for index, user_pending_input in enumerate(user_pending_inputs):
                 # 第一行有点样式
                 if index == 0:

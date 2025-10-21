@@ -51,7 +51,7 @@ class PermissionUI:
         result = []
         result.append(("class:permission.title", f" Create File({file_path})\n\n"))
         result.extend(render_hunks(hunks))
-        result.append(("", "\n\n"))
+        result.append(("", " \n \n"))
         result.append(("", f" Do you want to create {file_name}?\n"))
         options = [
             "1. Yes",
@@ -71,7 +71,7 @@ class PermissionUI:
         result = []
         result.append(("class:permission.title", f" Edit File({file_path})\n\n"))
         result.extend(render_hunks(hunks))
-        result.append(("", "\n\n"))
+        result.append(("", " \n \n"))
         result.append(("", f" Do you want to make this edit to {file_name}?\n"))
 
         options = [
@@ -96,7 +96,7 @@ class PermissionUI:
         result.append(("class:permission.title", f" Bash command\n\n"))
         result.append(("", f"   {command}\n"))
         result.append(("class:common.gray", f"   {propose}"))
-        result.append(("", "\n\n"))
+        result.append(("", " \n \n"))
         result.append(("", f" Do you want to proceed\n"))
         options = [
             "1. Yes",
@@ -118,7 +118,7 @@ class PermissionUI:
         result.append(("class:permission.title", f" Execute tool\n\n"))
         result.append(("", f"   Tool name: {tool_name}\n"))
         result.append(("", f"   Tool args: {text}"))
-        result.append(("", "\n\n"))
+        result.append(("", " \n \n"))
         result.append(("", f" Do you want to proceed\n"))
         options = [
             "1. Yes",

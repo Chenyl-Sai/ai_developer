@@ -62,7 +62,6 @@ class OutputCapture:
                 wrapper_self.queue = queue
                 wrapper_self.stream_type = stream_type
                 wrapper_self.real_stream = real_stream
-                wrapper_self._buffer = []
 
             def write(wrapper_self, text):
                 # **关键修改：不写入真实流，只捕获到队列**
@@ -70,28 +69,16 @@ class OutputCapture:
 
                 # 捕获到队列（用于日志记录）
                 if text and text.strip():
-                    wrapper_self._buffer.append(text)
-
-                    # 如果遇到换行或者缓冲区过大，就发送到队列
-                    if '\n' in text or len(''.join(wrapper_self._buffer)) > 200:
-                        content = ''.join(wrapper_self._buffer).strip()
-                        if content:
-                            kind = 'warning' if wrapper_self.stream_type == 'stderr' else 'warning'
-                            # 发送到队列，由 CLI 决定是否显示
-                            wrapper_self.queue.put(('captured_print', kind, content))
-                        wrapper_self._buffer = []
+                    kind = 'warning' if wrapper_self.stream_type == 'stderr' else 'warning'
+                    # 直接发送到队列，不经过缓冲区
+                    wrapper_self.queue.put(('captured_print', kind, text.strip()))
 
                 # 返回写入的字符数（模拟正常的 write 行为）
                 return len(text) if text else 0
 
             def flush(wrapper_self):
-                # 刷新缓冲区
-                if wrapper_self._buffer:
-                    content = ''.join(wrapper_self._buffer).strip()
-                    if content:
-                        kind = 'warning' if wrapper_self.stream_type == 'stderr' else 'warning'
-                        wrapper_self.queue.put(('captured_print', kind, content))
-                    wrapper_self._buffer = []
+                # 刷新缓冲区 - 现在没有缓冲区，直接返回
+                pass
 
             def isatty(wrapper_self):
                 # 返回 False，表示这不是一个终端
@@ -142,16 +129,12 @@ class OutputCapture:
 
     def process_captured_output(self):
         """处理捕获的输出（CLI主循环调用）"""
-        processed = []
-
         try:
             while True:
                 try:
                     item = self.capture_queue.get_nowait()
-                    processed.append(item)
+                    yield item
                 except Empty:
                     break
         except:
             pass
-
-        return processed

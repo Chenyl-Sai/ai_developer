@@ -43,7 +43,7 @@ async def format_ai_output(text):
     """
     if not text or not text.strip():
         from prompt_toolkit.formatted_text import ANSI
-        return ANSI("")
+        return ANSI(" ")
     
     from rich.console import Console
     from rich.markdown import Markdown
@@ -52,6 +52,7 @@ async def format_ai_output(text):
 
     buffer = StringIO()
     console = Console(file=buffer, force_terminal=True, color_system="truecolor")
+    text = text.replace("\n", " \n")
     console.print(Markdown(text))
     ansi_text = buffer.getvalue()
     return ANSI(ansi_text)
@@ -87,7 +88,7 @@ async def format_tool_block(block: ToolBlock) -> AnyFormattedText:
         if block.tool_args:
             escaped_message = _smart_escape_html(block.tool_args)
             html_text += f"({escaped_message})"
-        html_text += "\n"
+        html_text += " \n"
         # 展示过程中的额外消息
         if block.message:
             # 智能转义：只转义非HTML标签的内容
@@ -103,13 +104,13 @@ async def format_tool_block(block: ToolBlock) -> AnyFormattedText:
         if block.tool_args:
             escaped_message = _smart_escape_html(block.tool_args)
             html_text += f"({escaped_message})"
-        html_text += "\n"
+        html_text += " \n"
         # 展示总结性的信息
         if block.message:
             # 智能转义：只转义非HTML标签的内容
             escaped_message = _smart_escape_html(block.message)
             html_text += f"  ⎿  {escaped_message}"
-        html_text += "\n"
+        html_text += " \n"
         html = _safe_html_render(html_text, block)
         # 对于一些特殊的工具需要展示执行的详情
         detail = await format_tool_exec_detail(block)
@@ -124,7 +125,7 @@ async def format_tool_block(block: ToolBlock) -> AnyFormattedText:
         if block.tool_args:
             escaped_message = _smart_escape_html(block.tool_args)
             html_text += f"({escaped_message})"
-        html_text += "\n"
+        html_text += " \n"
         # 展示总结性的信息
         if block.message:
             # 智能转义：只转义非HTML标签的内容
@@ -132,7 +133,7 @@ async def format_tool_block(block: ToolBlock) -> AnyFormattedText:
             html_text += f"  ⎿  <style fg='#ff0000'>{escaped_message}</style>"
         else:
             html_text += f"  ⎿  <style fg='#ff0000'>Error</style>"
-        html_text += "\n"
+        html_text += " \n"
         html = _safe_html_render(html_text, block)
         # 对于一些特殊的工具需要展示执行的详情
         detail = await format_tool_exec_detail(block)
@@ -146,9 +147,10 @@ async def format_tool_exec_detail(block: ToolBlock) -> AnyFormattedText:
     tool_name = block.tool_name
     # 文件编辑 & 文件写入， 需要展示修改对比
     if tool_name in ["FileEditTool", "FileWriteTool"]:
-        patch = block.exec_result_details.get("patch")
-        if patch:
-            return FormattedText(render_hunks(patch))
+        if block.exec_result_details:
+            patch = block.exec_result_details.get("patch")
+            if patch:
+                return FormattedText(render_hunks(patch))
     # Bash命令执行
     elif tool_name in ["BashExecuteTool"]:
         return format_bash_execute_tool_output(block.exec_result_details)
@@ -241,33 +243,37 @@ def render_hunk(hunk: dict) -> list[tuple]:
                 ('class:tool.patch.diff.context', f"  {content}")
             ])
 
-    lines.append(('', "\n"))
+    lines.append(('', " \n"))
     return lines
 
 
 def format_bash_execute_tool_output(bash_execute_result: dict) -> FormattedText:
     """格式化展示Bash执行结果"""
     result = []
-    stderr = bash_execute_result.get('stderr', '')
-    error_message = bash_execute_result.get('error_message', '')
-    stdout = bash_execute_result.get('stdout', '')
+    if bash_execute_result:
+        stderr = bash_execute_result.get('stderr', '')
+        error_message = bash_execute_result.get('error_message', '')
+        stdout = bash_execute_result.get('stdout', '')
 
-    if stderr and len(stderr.strip()) > 0:
-        lines, remaining_lines = _format_multiline_text(stderr)
-        result.append(("class:common.red", lines))
-        if remaining_lines > 0:
-            result.append(("class:common.gray", f"    ... +{remaining_lines} lines"))
-    elif error_message and len(error_message.strip()) > 0:
-        lines, remaining_lines = _format_multiline_text(error_message)
-        result.append(("class:common.red", lines))
-        if remaining_lines > 0:
-            result.append(("class:common.gray", f"    ... +{remaining_lines} lines"))
-    # 其次检查 stdout
-    elif stdout and len(stdout.strip()) > 0:
-        lines, remaining_lines = _format_multiline_text(stdout)
-        result.append(("", lines))
-        if remaining_lines > 0:
-            result.append(("class:common.gray", f"    ... +{remaining_lines} lines"))
+        if stderr and len(stderr.strip()) > 0:
+            lines, remaining_lines = _format_multiline_text(stderr)
+            result.append(("class:common.red", lines))
+            if remaining_lines > 0:
+                result.append(("class:common.gray", f"    ... +{remaining_lines} lines"))
+        elif error_message and len(error_message.strip()) > 0:
+            lines, remaining_lines = _format_multiline_text(error_message)
+            result.append(("class:common.red", lines))
+            if remaining_lines > 0:
+                result.append(("class:common.gray", f"    ... +{remaining_lines} lines"))
+        # 其次检查 stdout
+        elif stdout and len(stdout.strip()) > 0:
+            lines, remaining_lines = _format_multiline_text(stdout)
+            result.append(("", lines))
+            if remaining_lines > 0:
+                result.append(("class:common.gray", f"    ... +{remaining_lines} lines"))
+        else:
+            # 如果都没有内容
+            result.append(("class:common.gray", "  ⎿ (No content)"))
     else:
         # 如果都没有内容
         result.append(("class:common.gray", "  ⎿ (No content)"))
@@ -363,9 +369,9 @@ def _safe_html_render(html_text: str, block: ToolBlock) -> AnyFormattedText:
         # 返回包含错误信息的格式化文本
         return FormattedText([
             ("class:common.red", f"⏺ {block.tool_name}"),
-            ("", "\n"),
+            ("", " \n"),
             ("class:common.red", f"  ⎿ 渲染错误: {str(e)}"),
-            ("", "\n")
+            ("", " \n")
         ])
 
 

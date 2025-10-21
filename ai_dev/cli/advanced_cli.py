@@ -11,8 +11,9 @@ import uuid
 import click
 
 from prompt_toolkit import Application
+from prompt_toolkit.clipboard import ClipboardData
 from prompt_toolkit.layout import Layout, HSplit, Window
-from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.application import get_app
 from prompt_toolkit.styles import Style
@@ -104,34 +105,23 @@ class AdvancedCLI:
             await event_manager.publish(interrupt_event)
             agent_logger.info(f"全局中断事件已发布: {interrupt_event}")
 
-        @self.normal_kb.add(Keys.Enter)
-        async def handle_enter(event):
-            """处理回车键"""
-            text = self.input_window.get_text()
-            if not text:
-                return
+        @self.normal_kb.add("c-x")
+        async def handle_copy(event):
+            layout = event.app.layout
+            if layout.has_focus(self.output_window.window):
+                self.output_window.window.content.copy_selection()
+                # 复制完了重置焦点
+                self.process_focus()
+            elif layout.has_focus(self.choice_window.window):
+                self.choice_window.window.content.copy_selection()
+                self.process_focus()
+            elif layout.has_focus(self.input_window.window.window):
+                clipboard_data: ClipboardData = self.input_window.window.buffer.copy_selection()
+                if clipboard_data and clipboard_data.text:
+                    import pyperclip
+                    """复制到系统剪贴板"""
+                    pyperclip.copy(clipboard_data.text)
 
-            # 清空输入框
-            self.input_window.set_text("")
-            # 重置自动滚动状态
-            self.output_window.set_auto_scroll(True)
-
-            input_type = await self.process_user_input(text)
-
-            if input_type == "Input":
-                # 调度异步任务
-                asyncio.create_task(self.process_stream_input(text))
-
-        # 滚动快捷键
-        @self.normal_kb.add(Keys.Up)
-        def scroll_up(event):
-            if self.output_window.output_control.scroll_up():
-                event.app.invalidate()
-
-        @self.normal_kb.add(Keys.Down)
-        def scroll_down(event):
-            if self.output_window.output_control.scroll_down():
-                event.app.invalidate()
 
     def _initialize_legacy_components(self):
         """初始化原有组件"""
@@ -218,9 +208,7 @@ class AdvancedCLI:
         try:
             while self._output_timer_running:
                 # 处理捕获的输出
-                captured_items = self.output_capture.process_captured_output()
-
-                for item in captured_items:
+                for item in self.output_capture.process_captured_output():
                     if item[0] == 'captured_print':
                         # 捕获的 print 输出 - 只记录到日志，不显示在界面
                         _, kind, content = item
@@ -232,8 +220,6 @@ class AdvancedCLI:
                     elif item[0] == 'exception':
                         # 异常信息 - 显示在界面
                         _, error_msg, stack_trace = item
-                        await self.output_window.add_common_block("class:error", f"❌ {error_msg}")
-                        await self.output_window.add_common_block("class:info", "详细信息请查看日志文件")
                         # 记录完整堆栈到日志
                         agent_logger.error(f"[Captured Exception]\n{stack_trace}")
 
@@ -346,19 +332,28 @@ class AdvancedCLI:
         if self.choice_window.need_show():
             new_children.append(self.choice_window.window)
             self.input_window.set_buffer_editable(False)
-            app.key_bindings = self.choice_window.get_choice_key_bindings()
+            choice_kb = self.choice_window.get_choice_key_bindings()
+            app.key_bindings = merge_key_bindings([self.normal_kb, choice_kb])
         # or 显示输入
         else:
             new_children.append(self.input_window.window.window)
             self.input_window.set_buffer_editable(True)
-            app.key_bindings = self.normal_kb
+            input_kb = self.input_window.get_input_kb()
+            app.key_bindings = merge_key_bindings([self.normal_kb, input_kb])
         # 下分割线
         new_children.append(self.down_separate_window)
         app.layout.container.children = new_children
+        # 焦点处理
+        self.process_focus()
+        app.invalidate()
+
+    def process_focus(self):
         # 如果当前不是选择，给输入库聚焦
         if not self.choice_window.need_show():
-            app.layout.focus(self.input_window.window.window)
-        app.invalidate()
+            get_app().layout.focus(self.input_window.window.window)
+        else:
+            get_app().layout.focus(self.choice_window.window)
+
 
     async def print_welcome(self):
         """打印欢迎信息"""
@@ -366,20 +361,20 @@ class AdvancedCLI:
             "═" * 60,
             "  🤖 AI Programming Assistant",
             "═" * 60,
-            "",
+            " ",
             "欢迎使用AI编程助手！我可以帮助您：",
             "• 读取和编辑文件",
             "• 搜索代码内容",
             "• 执行系统命令",
             "• 管理项目环境",
-            "",
+            " ",
             "使用方式：",
             "• 输入自然语言问题获得AI帮助",
             "• 使用 /help 查看所有可用指令",
             "• 使用 /clear 清除对话历史",
             "• 使用 /agents 查看可用代理",
             "• 输入 'quit' 退出程序",
-            ""
+            " "
         ]
         await self.output_window.batch_add_common_block("class:info", welcome_texts)
 
@@ -439,8 +434,8 @@ class AdvancedCLI:
 
                 app = Application(
                     layout=layout,
-                    key_bindings=self.normal_kb,
-                    full_screen=True,
+                    key_bindings=merge_key_bindings([self.normal_kb, self.input_window.get_input_kb()]),
+                    full_screen=False,
                     mouse_support=True,
                     style=style,
                     # 使用真实的终端输出（不受重定向影响）
