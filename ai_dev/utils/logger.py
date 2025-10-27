@@ -152,12 +152,14 @@ class AgentLogger:
         if self.logger:
             self.logger.info(f"[TOOL_CALL] Agent: {agent_id}, 工具: {tool_name}, 参数: {tool_args}")
 
-    def log_tool_result(self, agent_id: str, tool_name: str, result: str, success: bool):
+    def log_tool_result(self, agent_id: str, tool_name: str, result: str, success: bool, exception: Exception = None):
         """记录工具执行结果"""
         if self.logger:
             status = "成功" if success else "失败"
             result_preview = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
             self.logger.info(f"[TOOL_RESULT] Agent: {agent_id}, 工具: {tool_name}, 状态: {status}, 结果预览: {result_preview}")
+            if exception:
+                self.error("Tool Exec Failed", exception)
 
             # 记录完整的结果（调试级别）
             if success and result:
@@ -173,8 +175,7 @@ class AgentLogger:
             if conversation_history:
                 for i, msg in enumerate(conversation_history):
                     msg_type = type(msg).__name__
-                    content = self._sanitize_content(msg.content) if hasattr(msg, 'content') else str(msg)
-                    self.logger.debug(f"[MODEL_INPUT_{i}] Agent: {agent_id}, 类型: {msg_type}, 内容: {content}")
+                    self.logger.debug(f"[MODEL_INPUT_{i}] Agent: {agent_id}, 类型: {msg_type}, 内容: {msg}")
 
     def log_model_response(self, agent_id: str, model_name: str, ai_message: AIMessage = None):
         """记录模型响应"""

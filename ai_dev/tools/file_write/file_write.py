@@ -3,29 +3,21 @@
 """
 
 from pathlib import Path
-from typing import Any, Dict, Type, Generator
-from .base import StreamTool, CommonToolArgs
+from typing import Any, Dict, Type, Generator, AsyncGenerator
+from ai_dev.tools.base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
 from ai_dev.utils.patch import get_patch
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.freshness import update_agent_edit_time, check_freshness
-
-DESCRIPTION = """Write a file to the local filesystem. Overwrites the existing file if there is one.
-
-Before using this tool:
-
-1. Use the ReadFile tool to understand the file's contents and context
-
-2. Directory Verification (only applicable when creating new files):
-   - Use the LS tool to verify the parent directory exists and is the correct location"""
+from .prompt_cn import prompt
 
 class FileWriteTool(StreamTool):
     """文件写入工具"""
 
     # LangChain BaseTool要求的属性
     name: str = "FileWriteTool"
-    description: str = DESCRIPTION
+    description: str = prompt
 
     @property
     def show_name(self) -> str:
@@ -45,7 +37,7 @@ class FileWriteTool(StreamTool):
 
     args_schema: Type[BaseModel] = FileWriteArgs
 
-    def _execute_tool(self, file_path: str, content: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
+    async def _execute_tool(self, file_path: str, content: str, **kwargs) -> AsyncGenerator[dict, None]:
         """执行文件写入"""
         import json
 
@@ -95,7 +87,9 @@ class FileWriteTool(StreamTool):
 
         yield {
             "type": "tool_end",
+            "source": kwargs.get("context").get("agent_id"),
             "result_for_llm": result_data,
+            "context": kwargs.get("context")
         }
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
@@ -103,10 +97,10 @@ class FileWriteTool(StreamTool):
         relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
         return f"{relative_path}"
 
-    def _get_success_message(self, llm_result) -> str:
-        hunks = llm_result.get("patch")
+    def _get_success_message(self, result_for_show: Any) -> str:
+        hunks = result_for_show.get("patch")
         total_add = 0
         for hunk in hunks if hunks else []:
             total_add += len(hunk["lines"])
 
-        return f"Wrote <bold>{total_add}</bold> lines to <bold>{llm_result.get('file_path')}</bold>"
+        return f"Wrote <bold>{total_add}</bold> lines to <bold>{result_for_show.get('file_path')}</bold>"

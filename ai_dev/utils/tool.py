@@ -10,18 +10,18 @@ task_tool = TaskTool()
 todo_write_tool = TodoWriteTool()
 bash_execute_tool = BashExecuteTool()
 
-async def get_all_tools() -> list[BaseTool]:
+def get_all_tools() -> list[MyBaseTool]:
     return [file_read_tool, file_edit_tool, file_write_tool, file_list_tool,
             grep_tool, task_tool, todo_write_tool, bash_execute_tool]
 
-async def get_available_tools() -> list[BaseTool]:
-    return [tool for tool in await get_all_tools() if tool.is_available]
+def get_available_tools() -> list[MyBaseTool]:
+    return [tool for tool in get_all_tools() if tool.is_available]
 
-async def get_tool_by_name(name: str) -> BaseTool:
-    return next(filter(lambda tool: tool.name == name and tool.is_available, await get_all_tools()), None)
+def get_tool_by_name(name: str) -> MyBaseTool:
+    return next(filter(lambda tool: tool.name == name and tool.is_available, get_all_tools()), None)
 
-async def get_tools_by_names(names: list[str]) -> list[BaseTool]:
-    return [tool for tool in await get_available_tools() if tool.is_available and tool.name in names]
+def get_tools_by_names(names: list[str]) -> list[MyBaseTool]:
+    return [tool for tool in get_available_tools() if tool.is_available and tool.name in names]
 
-async def get_readonly_tools() -> list[BaseTool]:
-    return [tool for tool in await get_all_tools() if tool.is_available and tool.is_readonly]
+def get_readonly_tools() -> list[MyBaseTool]:
+    return [tool for tool in get_all_tools() if tool.is_available and tool.is_readonly]

@@ -2,19 +2,19 @@
 工具模块
 """
 
-from .base import BaseTool, StreamTool
-from .file_read import FileReadTool
-from .file_write import FileWriteTool
-from .file_edit import FileEditTool
-from .glob import GlobTool
-from .grep import GrepTool
-from .file_list import FileListTool
-from .task_tool import TaskTool
-from .todo_write import TodoWriteTool
-from .bash_exec import BashExecuteTool
+from .base import MyBaseTool, StreamTool
+from ai_dev.tools.file_read.file_read import FileReadTool
+from ai_dev.tools.file_write.file_write import FileWriteTool
+from ai_dev.tools.file_edit.file_edit import FileEditTool
+from ai_dev.tools.glob.glob import GlobTool
+from ai_dev.tools.grep.grep import GrepTool
+from ai_dev.tools.file_list.file_list import FileListTool
+from ai_dev.tools.task.task_tool import TaskTool
+from ai_dev.tools.todo.todo_write import TodoWriteTool
+from ai_dev.tools.bash.bash_exec import BashExecuteTool
 
 __all__ = [
-    "BaseTool",
+    "MyBaseTool",
     "StreamTool",
     "FileReadTool",
     "FileWriteTool",

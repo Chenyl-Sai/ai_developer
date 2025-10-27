@@ -3,21 +3,20 @@
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Generator
-from .base import StreamTool, CommonToolArgs
+from typing import Any, Dict, List, Optional, Type, Generator, AsyncGenerator
+from ai_dev.tools.base import StreamTool, CommonToolArgs
 import os
 from pydantic import BaseModel, Field
+from .prompt_cn import prompt
 
-DESCRIPTION="Lists files and directories in a given path. The path parameter must be an absolute path, not a relative path. You should generally prefer the Glob and Grep tools, if you know which directories to search."
-MAX_FILES = 1000
+MAX_FILES = 100
 
 class FileListTool(StreamTool):
-    """LS工具 - 深度优先遍历目录下的所有文件和文件夹，返回树形结构"""
+    """LS工具 - 广度优先遍历目录下的所有文件和文件夹，返回树形结构"""
 
     # LangChain BaseTool要求的属性
     name: str = "FileListTool"
-    description: str = DESCRIPTION
-    found_file_count: int = 0
+    description: str = prompt
 
     class FileListArgs(CommonToolArgs):
         path: str = Field(description="The absolute path to the directory to list (must be absolute, not relative)")
@@ -52,32 +51,40 @@ class FileListTool(StreamTool):
 
         return any(rules)
 
-    def _depth_first_traverse(self, directory: Path, file_count: List[int], max_files: int = MAX_FILES) -> List[Dict[str, Any]]:
-        """深度优先遍历目录"""
+    def _breadth_first_traverse(self, directory: Path, file_count: List[int], max_files: int = MAX_FILES) -> List[Dict[str, Any]]:
+        """广度优先遍历目录"""
         items = []
+        # 队列存储 (当前目录, 父级items列表, 当前层级)
+        queue = [(directory, items, 0)]
 
         try:
-            for path in directory.iterdir():
-                if file_count[0] >= max_files:
-                    return items
+            while queue and file_count[0] < max_files:
+                current_dir, parent_items, current_level = queue.pop(0)
 
-                if self._skip(str(path)):
-                    continue
+                for path in current_dir.iterdir():
+                    if file_count[0] >= max_files:
+                        break
 
-                item = {
-                    "name": path.name,
-                    "path": str(path),
-                    "type": "file" if path.is_file() else "directory"
-                }
+                    if self._skip(str(path)):
+                        continue
 
-                file_count[0] += 1
+                    item = {
+                        "name": path.name,
+                        "path": str(path),
+                        "type": "file" if path.is_file() else "directory"
+                    }
 
-                if path.is_dir():
-                    # 递归遍历子目录
-                    children = self._depth_first_traverse(path, file_count, max_files)
-                    item["children"] = children
+                    file_count[0] += 1
 
-                items.append(item)
+                    if path.is_dir():
+                        # 为目录创建子项列表
+                        item["children"] = []
+                        # 将子目录添加到队列中
+                        queue.append((path, item["children"], current_level + 1))
+
+                    # 将项目添加到父级
+                    parent_items.append(item)
+
         except (PermissionError, OSError):
             # 忽略权限错误等
             pass
@@ -107,7 +114,7 @@ class FileListTool(StreamTool):
 
         return result
 
-    def _execute_tool(self, path: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
+    async def _execute_tool(self, path: str, **kwargs) -> AsyncGenerator[dict, None]:
         """执行目录遍历"""
         safe_dir = self._safe_join_path(path)
 
@@ -117,9 +124,9 @@ class FileListTool(StreamTool):
         if not safe_dir.is_dir():
             raise ValueError(f"Path is not a directory: {path}")
 
-        # 深度优先遍历
+        # 广度优先遍历
         file_count = [0]  # 使用列表来传递引用
-        items = self._depth_first_traverse(safe_dir, file_count, MAX_FILES)
+        items = self._breadth_first_traverse(safe_dir, file_count, MAX_FILES)
 
         # 构建树形结构
         tree = self._build_tree_structure(items, safe_dir)
@@ -130,19 +137,24 @@ class FileListTool(StreamTool):
         # 添加统计信息
         if file_count[0] < MAX_FILES:
             result_data = formatted_tree
-            self.found_file_count = file_count[0]
+            found_file_count = file_count[0]
         else:
             result_data = f"There are more than {MAX_FILES} files in the repository. Use the LS tool (passing a specific path), BashExecuteTool tool, and other tools to explore nested directories. The first {MAX_FILES} files and directories are included below:\n\n"
             result_data += formatted_tree
-            self.found_file_count = MAX_FILES
+            found_file_count = MAX_FILES
 
         yield {
             "type": "tool_end",
+            "source": kwargs.get("context").get("agent_id"),
             "result_for_llm": result_data,
+            "context": kwargs.get("context"),
+            "result_for_show": {
+                "found_file_count": found_file_count,
+            }
         }
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
         return kwargs.get("path")
 
-    def _get_success_message(self, result: str) -> str:
-        return f"Found <b>{self.found_file_count}</b> files"
+    def _get_success_message(self, result_for_show: Any) -> str:
+        return f"Found <b>{result_for_show.get('found_file_count', 0)}</b> files"

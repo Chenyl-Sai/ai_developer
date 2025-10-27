@@ -3,28 +3,20 @@
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Type, Generator
-from .base import StreamTool, CommonToolArgs
+from typing import Any, Dict, List, Type, Generator, AsyncGenerator
+from ai_dev.tools.base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 from ai_dev.core.global_state import GlobalState
+from .constant import MAX_FILES
+from .prompt_cn import prompt, prompt_too_many_files
 
-DESCRIPTION = """- Fast content search tool that works with any codebase size
-- Searches file contents using regular expressions
-- Supports full regex syntax (eg. "log.*Error", "function\s+\w+", etc.)
-- Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")
-- Returns matching file paths sorted by modification time
-- Use this tool when you need to find files containing specific patterns
-- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead"""
-
-MAX_FILE_COUNT = 100
 
 class GrepTool(StreamTool):
     """文件搜索工具"""
 
     # LangChain BaseTool要求的属性
     name: str = "GrepTool"
-    description: str = DESCRIPTION
-    found_file_count: int = 0
+    description: str = prompt
 
     @property
     def show_name(self) -> str:
@@ -45,7 +37,7 @@ class GrepTool(StreamTool):
 
     args_schema: Type[BaseModel] = GrepArgs
 
-    def _execute_tool(self, pattern: str, directory: str = "", file_pattern: str = "", **kwargs) -> Generator[Dict[str, Any], None, None]:
+    async def _execute_tool(self, pattern: str, directory: str = "", file_pattern: str = "", **kwargs) -> AsyncGenerator[dict, None]:
         """执行文件搜索"""
         import subprocess
         import os
@@ -91,13 +83,20 @@ class GrepTool(StreamTool):
                             "modified": full_path.stat().st_mtime
                         })
 
-                self.found_file_count = len(results)
-
-                result_data = json.dumps(results, ensure_ascii=False, indent=2)
+                result_data = ""
+                if len(results) > MAX_FILES:
+                    results = results[:MAX_FILES]
+                    result_data = prompt_too_many_files
+                result_data += json.dumps(results, ensure_ascii=False, indent=2)
 
                 yield {
                     "type": "tool_end",
+                    "source": kwargs.get("context").get("agent_id"),
                     "result_for_llm": result_data,
+                    "context": kwargs.get("context"),
+                    "result_for_show": {
+                        "found_file_count": len(results),
+                    }
                 }
 
             elif result.returncode == 1:
@@ -105,7 +104,12 @@ class GrepTool(StreamTool):
                 result_data = "[]"
                 yield {
                     "type": "tool_end",
+                    "source": kwargs.get("context").get("agent_id"),
                     "result_for_llm": result_data,
+                    "context": kwargs.get("context"),
+                    "result_for_show": {
+                        "found_file_count": 0,
+                    }
                 }
 
             else:
@@ -115,5 +119,5 @@ class GrepTool(StreamTool):
         except FileNotFoundError:
             raise RuntimeError("ripgrep command not found. Please install ripgrep (rg) to use this tool.")
 
-    def _get_success_message(self, result: str) -> str:
-        return f"Found <b>{self.found_file_count}</b> files"
+    def _get_success_message(self, result_for_show: Any) -> str:
+        return f"Found <b>{result_for_show.get('found_file_count')}</b> files"

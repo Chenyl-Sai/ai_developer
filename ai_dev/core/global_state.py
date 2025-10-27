@@ -20,8 +20,10 @@ class GlobalState:
     _environment_state: Optional[EnvironmentState] = None
     _config_manager = None
     _model_manager = None
+    _permission_manager = None
     _cli_instance = None
     _user_input_queue: AsyncBatchQueue = None
+    _show_output_details: bool = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -91,6 +93,14 @@ class GlobalState:
         return cls._model_manager
 
     @classmethod
+    def set_permission_manager(cls, permission_manager):
+        cls._permission_manager = permission_manager
+
+    @classmethod
+    def get_permission_manager(cls):
+        return cls._permission_manager
+
+    @classmethod
     def set_cli_instance(cls, cli_instance):
         """设置CLI实例"""
         cls._cli_instance = cli_instance
@@ -114,3 +124,11 @@ class GlobalState:
     @classmethod
     def get_user_input_queue(cls) -> AsyncBatchQueue:
         return cls._user_input_queue
+
+    @classmethod
+    def set_show_output_details(cls, show_output_details: bool):
+        cls._show_output_details = show_output_details
+
+    @classmethod
+    def get_show_output_details(cls):
+        return cls._show_output_details

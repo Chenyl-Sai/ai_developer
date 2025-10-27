@@ -1,9 +1,9 @@
 """
 工具基类定义
 """
-
+import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type, Generator, Annotated
+from typing import Any, Dict, List, Optional, Type, Generator, Annotated, AsyncGenerator
 from pathlib import Path
 import os
 import json
@@ -16,7 +16,7 @@ from ai_dev.utils.logger import agent_logger
 class CommonToolArgs(BaseModel):
     context: Annotated[dict, InjectedToolArg]
 
-class BaseTool(LangChainBaseTool, ABC):
+class MyBaseTool(LangChainBaseTool, ABC):
     """工具基类 - 继承自LangChain的BaseTool"""
 
     def __init__(self, **kwargs):
@@ -90,10 +90,13 @@ class BaseTool(LangChainBaseTool, ABC):
         # 其他工具需要权限检查
         return True
 
-class StreamTool(BaseTool):
+class StreamTool(MyBaseTool):
     """支持流式输出的工具基类"""
 
-    def _run(self, *args, **kwargs) -> str:
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
+        return asyncio.run(self._arun(*args, **kwargs))
+
+    async def _arun(self, *args, **kwargs) -> Any:
         """
         执行工具 - 自动处理流式输出
 
@@ -108,76 +111,89 @@ class StreamTool(BaseTool):
         if self._send_tool_start_event():
             writer({
                 "type": "tool_start",
+                "source": context.get("agent_id"),
                 "tool_id": context.get("tool_id"),
                 "tool_name": self.name,
                 "tool_args": kwargs,
                 "shown_tool_args": self._format_args(kwargs),
-                "title": f"<b>{self.show_name}</b>({self._format_args(kwargs)})",
                 "message": "Doing...",
                 "context": context
             })
 
         try:
             # 执行工具逻辑 - 支持生成器返回
-            llm_result = ""
-            for result in self._execute_tool(*args, **kwargs):
-                # 处理新的字典格式
-                if result["type"] == "tool_delta":
-                    # 进度信息直接显示给用户
-                    writer({
-                        "type": "tool_delta",
-                        "tool_id": context.get("tool_id"),
-                        "tool_name": self.name,
-                        "message": result.get("show_message", ""),
-                        "context": context
-                    })
-                elif result["type"] == "tool_end":
-                    # 最终结果
-                    llm_result = result.get("result_for_llm", "")
-                    # 阶段2: 执行完成
-                    writer({
-                        "type": "tool_end",
-                        "tool_id": context.get("tool_id"),
-                        "tool_name": self.name,
-                        "message": f"{self._get_success_message(llm_result)}",
-                        "status": "success",
-                        "result": llm_result,
-                        "context": context
-                    })
-            agent_logger.log_tool_result(context.get("agent_id"), self.name, str(llm_result), True)
-            return llm_result
+            async for chunk in self._execute_tool(*args, **kwargs):
+                agent_logger.debug(f"Agent {context.get('agent_id')} Tool execute chunk message: {chunk}")
+                # 只有输出的chunk中有context，并且有tool_id，而且和context中相同的，才是本agent的工具调用的结果，其他的都是子agent的输出
+                if ("context" in chunk
+                        and chunk.get("context")
+                        and chunk.get("context").get("tool_id") == context.get("tool_id")):
+                    # 处理新的字典格式
+                    if chunk.get("type") == "tool_delta":
+                        # 进度信息直接显示给用户
+                        writer({
+                            "type": "tool_delta",
+                            "source": chunk.get("source"),
+                            "tool_id": context.get("tool_id"),
+                            "tool_name": self.name,
+                            "message": chunk.get("show_message", ""),
+                            "context": context
+                        })
+                    elif chunk.get("type") == "tool_end":
+                        # 最终结果
+                        result_for_llm = chunk.get("result_for_llm")
+                        result_for_show = chunk.get("result_for_show")
+                        # 阶段2: 执行完成
+                        writer({
+                            "type": "tool_end",
+                            "source": chunk.get("source"),
+                            "tool_id": context.get("tool_id"),
+                            "tool_name": self.name,
+                            "message": f"{self._get_success_message(result_for_show if result_for_show else result_for_llm)}",
+                            "status": "success",
+                            "result": result_for_show if result_for_show else result_for_llm,
+                            "context": context
+                        })
+                        agent_logger.log_tool_result(context.get("agent_id"), self.name, str(result_for_llm), True)
+                        return result_for_llm
+                else:
+                    # 工具中有可能创建新的agent，这时候agent会返回格式各样的消息
+                    writer(chunk)
 
         except Exception as e:
             # 阶段2: 执行失败
             writer({
                 "type": "tool_end",
+                "source": context.get("agent_id"),
                 "tool_id": context.get("tool_id"),
                 "tool_name": self.name,
                 "message": str(e),
                 "status": "error",
                 "context": context
             })
-            agent_logger.log_tool_result(context.get("agent_id"), self.name, str(e), False)
+            agent_logger.log_tool_result(context.get("agent_id"), self.name, str(e), False, exception=e)
             raise e
 
     def _send_tool_start_event(self):
         """"是否发送工具开始执行事件"""
         return True
 
-    def _execute_tool(self, *args, **kwargs) -> Any:
+    async def _execute_tool(self, *args, **kwargs) -> AsyncGenerator[dict, None]:
         """
         执行工具逻辑 - 子类需要重写此方法
 
         返回工具执行结果（字符串形式）
         """
-        raise NotImplementedError("Subclasses must implement _execute_tool method")
+        # 为了编译期不报警告
+        if False:
+            yield {}
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
         """格式化工具参数用于显示"""
         args_str = ", ".join([f"{k}: {repr(v)}" for k, v in kwargs.items() if k not in ["context"]])
         return args_str
 
-    def _get_success_message(self, llm_result) -> str:
+    def _get_success_message(self, result_for_show: Any) -> str:
         """生成成功消息"""
         # 子类可以重写此方法提供更具体的成功消息
         return f"成功执行"

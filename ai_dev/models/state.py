@@ -19,7 +19,10 @@ def add_or_replace_messages(left: Messages,
         return add_messages(left, right)
 
 
-class AgentState(BaseModel):
+def accept_new_merger(old_value:bool, new_value:bool) -> bool:
+    return new_value
+
+class MyAgentState(BaseModel):
     """Agent状态"""
     # 对话历史 - 使用LangChain的Message类型
     messages: Annotated[list, add_or_replace_messages] = Field(default=[])

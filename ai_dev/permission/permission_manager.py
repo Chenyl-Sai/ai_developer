@@ -26,9 +26,10 @@ class UserPermissionChoice(Enum):
 class PermissionRequest:
     """权限请求"""
 
-    def __init__(self, tool_name: str, tool_args: Dict[str, Any], working_directory: str):
+    def __init__(self, tool_name: str, tool_args: Dict[str, Any], agent_id: str, working_directory: str):
         self.tool_name = tool_name
         self.tool_args = tool_args
+        self.agent_id = agent_id
         self.working_directory = working_directory
         self.permission_key = self._generate_permission_key()
 
@@ -62,6 +63,7 @@ class PermissionRequest:
             "type": "permission_request",
             "tool_name": self.tool_name,
             "tool_args": self.tool_args,
+            "task_id": self.agent_id,
             "working_directory": self.working_directory,
             "permission_key": self.permission_key
         }
@@ -190,7 +192,8 @@ class PermissionManager:
             ]
         })
 
-    async def check_permission(self, tool_name: str, tool_args: Dict[str, Any], working_directory: str) -> Tuple[PermissionDecision, PermissionRequest]:
+    async def check_permission(self, tool_name: str, tool_args: Dict[str, Any], agent_id: str, working_directory: str) \
+            -> Tuple[PermissionDecision, PermissionRequest]:
         """检查工具权限
 
         Returns:
@@ -198,9 +201,12 @@ class PermissionManager:
         """
         from ..utils.logger import agent_logger
 
-        request = PermissionRequest(tool_name, tool_args, working_directory)
+        agent_logger.debug(f"[PERMISSION_DEBUG] 工具 {tool_name} 参数 {tool_args} agent_id: {agent_id}")
+
+        request = PermissionRequest(tool_name, tool_args, agent_id, working_directory)
 
         # 首先检查会话缓存, 只有本次会话允许的才会缓存起来
+        agent_logger.debug(f"Current permission session cache: {self.session_cache}")
         if request.permission_key in self.session_cache:
             agent_logger.debug(f"[PERMISSION_DEBUG] 工具 {tool_name} 命中会话缓存，权限键: {request.permission_key}")
             return PermissionDecision.ALLOW, request

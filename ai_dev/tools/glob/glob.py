@@ -3,23 +3,18 @@
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Type, Generator
-from .base import StreamTool, CommonToolArgs
+from typing import Any, Dict, List, Type, Generator, AsyncGenerator
+from ai_dev.tools.base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
-
-DESCRIPTION = """- Fast file pattern matching tool that works with any codebase size
-- Supports glob patterns like "**/*.js" or "src/**/*.ts"
-- Returns matching file paths sorted by modification time
-- Use this tool when you need to find files by name patterns
-- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead"""
+from .prompt_cn import prompt, prompt_too_many_files
+from .constant import MAX_FILES
 
 class GlobTool(StreamTool):
     """Glob工具 - 根据模式匹配文件"""
 
     # LangChain BaseTool要求的属性
     name: str = "GlobTool"
-    description: str = DESCRIPTION
-    found_file_count: int = 0
+    description: str = prompt
 
     @property
     def show_name(self) -> str:
@@ -39,7 +34,7 @@ class GlobTool(StreamTool):
 
     args_schema: Type[BaseModel] = GlobArgs
 
-    def _execute_tool(self, directory: str, pattern: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
+    async def _execute_tool(self, directory: str, pattern: str, **kwargs) -> AsyncGenerator[dict, None]:
         """执行文件模式匹配"""
         import json
 
@@ -64,14 +59,23 @@ class GlobTool(StreamTool):
         if files:
             files.sort(key=lambda f: f["modified"])
 
-        self.found_file_count = len(files)
+        found_file_count = len(files)
+        result_data = ""
+        if found_file_count > MAX_FILES:
+            files = files[:MAX_FILES]
+            result_data = prompt_too_many_files
 
-        result_data = json.dumps(files, ensure_ascii=False, indent=2)
+        result_data += json.dumps(files, ensure_ascii=False, indent=2)
 
         yield {
             "type": "tool_end",
+            "source": kwargs.get("context").get("agent_id"),
             "result_for_llm": result_data,
+            "context": kwargs.get("context"),
+            "result_for_show": {
+                "found_file_count": len(files),
+            }
         }
 
-    def _get_success_message(self, result: str) -> str:
-        return f"Found <b>{self.found_file_count}</b> files"
+    def _get_success_message(self, result_for_show: Any) -> str:
+        return f"Found <b>{result_for_show.get('found_file_count')}</b> files"

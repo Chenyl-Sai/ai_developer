@@ -5,15 +5,13 @@
 
 import unittest
 import tempfile
-import os
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 # 添加项目路径到 sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ai_dev.tools.glob import GlobTool
+from ai_dev.tools.glob.glob import GlobTool
 
 
 class TestGlobTool(unittest.TestCase):

@@ -20,14 +20,10 @@ class SubAgentConfig(BaseModel):
     tools: str | list[str] = Field(default='*', description="可用工具列表")
     model: str | None = Field(default=None, description="使用的模型")
 
+build_in_general_agent_description = "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks"
+build_in_general_agent_description_cn = "通用型 Agent，用于研究复杂问题、搜索代码以及执行多步骤任务。"
 
-# Built-in general-purpose agent as fallback
-BUILTIN_GENERAL_PURPOSE: SubAgentConfig = SubAgentConfig(
-    agent_name='general-purpose',
-    agent_type='built-in',
-    description='General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks',
-    tools='*',
-    system_prompt="""You are a general-purpose agent. Given the user's task, use the tools available to complete it efficiently and thoroughly.
+build_in_general_agent_system_prompt = """You are a general-purpose agent. Given the user's task, use the tools available to complete it efficiently and thoroughly.
 
 When to use your capabilities:
 - Searching for code, configurations, and patterns across large codebases
@@ -40,6 +36,27 @@ Guidelines:
 - For analysis: Start broad and narrow down. Use multiple search strategies if the first doesn't yield results.
 - Be thorough: Check multiple locations, consider different naming conventions, look for related files.
 - Complete tasks directly using your capabilities."""
+build_in_general_agent_system_prompt_cn = """你是一个通用型 Agent。根据用户的任务，使用可用工具高效且全面地完成任务。
+
+使用场景:
+- 在大型代码库中搜索代码、配置文件和模式
+- 分析多个文件以理解系统架构
+- 调查需要遍历多个文件的复杂问题
+- 执行多步骤的研究任务
+
+操作指南:
+- **文件搜索**: - 当需要广泛搜索时，使用 GrepTool 或 GlobTool。当已知具体文件路径时，使用 FileReadTool。
+- **分析任务**: - 先广泛搜索，再逐步缩小范围。若第一次搜索未得到结果，可使用多种搜索策略。
+- **保持彻底性**: - 检查多个位置，考虑不同命名方式，查找相关文件。
+- **直接完成任务**: - 使用你的能力直接执行任务，不依赖用户进一步指示。"""
+
+# Built-in general-purpose agent as fallback
+BUILTIN_GENERAL_PURPOSE: SubAgentConfig = SubAgentConfig(
+    agent_name='general-purpose',
+    agent_type='built-in',
+    description=build_in_general_agent_description_cn,
+    tools='*',
+    system_prompt=build_in_general_agent_system_prompt_cn
 )
 
 async def scan_sub_agent_directory(directory: Path, agent_type: Literal["user", "project"]) -> list[SubAgentConfig]:

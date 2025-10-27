@@ -9,7 +9,7 @@ from prompt_toolkit.layout import Window
 
 from ai_dev.constants.product import MAIN_AGENT_ID
 from ai_dev.core.global_state import GlobalState
-from ai_dev.utils.render import OutputBlock, InputBlock, MessageBlock, ToolBlock, format_output_block
+from ai_dev.utils.render import OutputBlock, InputBlock, MessageBlock, ToolBlock, format_output_block, TaskBlock
 from ai_dev.components.common_window import CommonWindow
 from ai_dev.utils.todo import TodoItemStorage, get_todos
 from ai_dev.utils.logger import agent_logger
@@ -22,6 +22,7 @@ class OutputWindow(CommonWindow):
         super().__init__(**kwargs)
         self.output_blocks: list[OutputBlock] = []
         self.output_block_dict: dict[str, OutputBlock] = {}
+        self.task_block_dict: dict[str, OutputBlock] = {}
         self.todo_lines: list[TodoItemStorage] = []
         # 输出控制
         self.output_control = ScrollableFormattedTextControl(
@@ -46,17 +47,20 @@ class OutputWindow(CommonWindow):
             "Thinking...", "Analyzing...", "Computing...", "Calculating..."
         ]
 
+        # Task处理进度记录相关变量
+        self._task_breathe_color_controller = {}
+        self._task_breathe_color_controller_running = False
+
         # 创建事件循环用于界面刷新展示
         self._loop = asyncio.new_event_loop()
-
         def start_loop(loop):
             asyncio.set_event_loop(loop)
             loop.run_forever()
-
         import threading
         threading.Thread(target=start_loop, args=(self._loop,), daemon=True).start()
-        
-        event_manager.subscribe(EventType.INTERRUPT, self._process_user_interrupt)
+
+        # 订阅用户取消事件
+        event_manager.subscribe(EventType.USER_CANCEL, self._process_user_cancel)
 
     def set_auto_scroll(self, auto_scroll: bool):
         self.output_control.auto_scroll = auto_scroll
@@ -80,57 +84,136 @@ class OutputWindow(CommonWindow):
 
     async def add_stream_output(self, chunk: dict):
         """向输出面板添加流式输出的内容"""
-        # AI 消息
-        if chunk.get('type') == "message_start":
-            block = MessageBlock(id=chunk['message_id'], content=" ", status="start")
-            self.output_blocks.append(block)
-            self.output_block_dict["message_" + chunk['message_id']] = block
-            # 开始跟踪模型输出进度
-            self._model_output_start_time = time.time()
-            self._random_progress_text = random.choice(self._progress_indicator_texts)
-            self._token_count = 0
-        elif chunk.get('type') == "message_delta":
-            block = self.output_block_dict["message_" + chunk['message_id']]
-            block.content += chunk['delta']
-            self._token_count = chunk['estimate_tokens']
-        elif chunk.get('type') == "message_end":
-            self.output_block_dict["message_" + chunk['message_id']].status = "stop"
-            # 结束跟踪模型输出进度
-            self._model_output_start_time = None
-            self._random_progress_text = None
-            self._token_count = 0
+        # 主Agent输出
+        if "source" in chunk and chunk["source"] == MAIN_AGENT_ID:
+            # AI 消息
+            if chunk.get('type') == "message_start":
+                block = MessageBlock(id=chunk['message_id'], content=" ", status="start")
+                self.output_blocks.append(block)
+                self.output_block_dict["message_" + chunk['message_id']] = block
+                # 开始跟踪模型输出进度
+                self._model_output_start_time = time.time()
+                self._random_progress_text = random.choice(self._progress_indicator_texts)
+                self._token_count = 0
+            elif chunk.get('type') == "message_delta":
+                block = self.output_block_dict.get("message_" + chunk['message_id'])
+                if block:
+                    block.content += chunk['delta']
+                    self._token_count = chunk['estimate_tokens']
+            elif chunk.get('type') == "message_end":
+                block = self.output_block_dict.get("message_" + chunk['message_id'])
+                if block:
+                    block.status = "stop"
+                # 结束跟踪模型输出进度
+                self._model_output_start_time = None
+                self._random_progress_text = None
+                self._token_count = 0
 
-        # 工具消息
-        elif chunk.get('type') == "tool_start":
-            block = ToolBlock(id=chunk['tool_id'],
-                              tool_name=chunk['tool_name'],
-                              tool_args=chunk['shown_tool_args'],
-                              message=chunk['message'],
-                              status="start")
-            self.output_blocks.append(block)
-            self.output_block_dict["tool_" + chunk['tool_id']] = block
-        elif chunk.get('type') == "tool_delta":
-            block = self.output_block_dict["tool_" + chunk['tool_id']]
-            block.message = chunk['message']
-        elif chunk.get('type') == "tool_end":
-            # 对于待办工具使用做特殊处理
-            if chunk.get("tool_name") == "TodoWriteTool":
-                agent_id = MAIN_AGENT_ID
-                context = chunk.get("context", {})
-                if context and "agent_id" in context:
-                    if len(context.get("agent_id")) > 0:
-                        agent_id = context.get("agent_id")
-                todos = await get_todos(agent_id)
-                # 如果全部都完成了，就不添加了
-                remains = [todo for todo in todos if todo.status != 'completed']
-                if len(remains) == 0:
-                    todos = []
-                self.todo_lines = todos
-            else:
-                block = self.output_block_dict["tool_" + chunk['tool_id']]
-                block.message = chunk.get('message')
-                block.status = chunk.get("status")
-                block.exec_result_details = chunk.get("result")
+            # 工具消息
+            elif chunk.get('type') == "tool_start":
+                if chunk['tool_name'] == "TaskTool":
+                    block = TaskBlock(id=chunk['tool_id'],
+                                      task_id=chunk['task_id'],
+                                      tool_name=chunk['tool_name'],
+                                      tool_args=chunk['tool_args'],
+                                      message=chunk['message'],
+                                      status="start",
+                                      start_time=time.time())
+                    self.output_blocks.append(block)
+                    self.task_block_dict["task_" + chunk['task_id']] = block
+                    self._task_breathe_color_controller[block.id] = 0
+                else:
+                    block = ToolBlock(id=chunk['tool_id'],
+                                      tool_name=chunk['tool_name'],
+                                      tool_args=chunk['shown_tool_args'],
+                                      message=chunk['message'],
+                                      status="start")
+                    self.output_blocks.append(block)
+                    self.output_block_dict["tool_" + chunk['tool_id']] = block
+            elif chunk.get('type') == "tool_delta":
+                if chunk['tool_name'] == "TaskTool":
+                    block = self.task_block_dict.get("task_" + chunk['task_id'])
+                    if block:
+                        block.message = chunk['message']
+                else:
+                    block = self.output_block_dict.get("tool_" + chunk['tool_id'])
+                    if block:
+                        block.message = chunk['message']
+            elif chunk.get('type') == "tool_end":
+                # 对于待办工具使用做特殊处理
+                if chunk['tool_name'] == "TaskTool":
+                    block = self.task_block_dict.get("task_" + chunk['task_id'])
+                    if block:
+                        block.end_time = time.time()
+                        block.message = chunk.get('message')
+                        block.status = chunk.get("status")
+                        block.task_response = chunk.get("result")
+                        agent_logger.debug(f"Task End Chunk: {chunk}")
+                        if block.id in self._task_breathe_color_controller:
+                            del self._task_breathe_color_controller[block.id]
+                elif chunk.get("tool_name") == "TodoWriteTool":
+                    agent_id = MAIN_AGENT_ID
+                    context = chunk.get("context", {})
+                    if context and "agent_id" in context:
+                        if len(context.get("agent_id")) > 0:
+                            agent_id = context.get("agent_id")
+                    todos = await get_todos(agent_id)
+                    # 如果全部都完成了，就不添加了
+                    remains = [todo for todo in todos if todo.status != 'completed']
+                    if len(remains) == 0:
+                        todos = []
+                    self.todo_lines = todos
+                else:
+                    block = self.output_block_dict.get("tool_" + chunk['tool_id'])
+                    if block:
+                        block.message = chunk.get('message')
+                        block.status = chunk.get("status")
+                        block.exec_result_details = chunk.get("result")
+        else:
+            # 子任务的输出
+            # 找到那个任务
+            task_block = self.task_block_dict.get("task_" + chunk.get("source"))
+            # 如果没有找到哪个task就丢了
+            if not task_block:
+                agent_logger.warning(f"Chunk does not fount its parent task block: {chunk}")
+                return
+
+            # AI 消息
+            if chunk.get('type') == "message_start":
+                block = MessageBlock(id=chunk['message_id'], content=" ", status="start")
+                task_block.process_blocks.append(block)
+                task_block.process_block_dict["message_" + chunk['message_id']] = block
+            elif chunk.get('type') == "message_delta":
+                block = task_block.process_block_dict.get("message_" + chunk['message_id'])
+                if block:
+                    block.content += chunk['delta']
+                    self._token_count = chunk['estimate_tokens']
+            elif chunk.get('type') == "message_end":
+                block = task_block.process_block_dict.get("message_" + chunk['message_id'])
+                if block:
+                    block.status = "stop"
+
+            # 工具消息
+            elif chunk.get('type') == "tool_start":
+                block = ToolBlock(id=chunk['tool_id'],
+                                  tool_name=chunk['tool_name'],
+                                  tool_args=chunk['shown_tool_args'],
+                                  message=chunk['message'],
+                                  status="start")
+                task_block.tool_ids.add(chunk['tool_id'])
+                task_block.process_blocks.append(block)
+                task_block.process_block_dict["tool_" + chunk['tool_id']] = block
+            elif chunk.get('type') == "tool_delta":
+                block = task_block.process_block_dict.get("tool_" + chunk['tool_id'])
+                if block:
+                    block.message = chunk['message']
+            elif chunk.get('type') == "tool_end":
+                block = task_block.process_block_dict.get("tool_" + chunk['tool_id'])
+                if block:
+                    block.message = chunk.get('message')
+                    block.status = chunk.get("status")
+                    block.exec_result_details = chunk.get("result")
+
         self.refresh()
 
     async def remove_recently_user_input_block(self, text: str):
@@ -168,6 +251,25 @@ class OutputWindow(CommonWindow):
         finally:
             self._compensation_pending_input_running = False
 
+    async def task_breathe_color_controller_loop(self):
+        self._task_breathe_color_controller_running = True
+
+        try:
+            while self._task_breathe_color_controller_running:
+                if self._task_breathe_color_controller:
+                    for task_id, color in self._task_breathe_color_controller.items():
+                        if color == 0:
+                            self._task_breathe_color_controller.update({task_id: 1})
+                        else:
+                            self._task_breathe_color_controller.update({task_id: 0})
+                    # 刷新一下
+                    self.refresh()
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._task_breathe_color_controller_running = False
+
     def _get_full_output_text(self):
         result = []
         result.extend(asyncio.run_coroutine_threadsafe(self._get_output_part(), self._loop).result())
@@ -178,7 +280,7 @@ class OutputWindow(CommonWindow):
     async def _get_output_part(self):
         result = []
         for block in self.output_blocks:
-            result.append(await format_output_block(block))
+            result.append(await format_output_block(block, self._task_breathe_color_controller))
             # 每个block之间添加一个换行
             result.append(FormattedText([("", " \n")]))
         return result
@@ -221,19 +323,19 @@ class OutputWindow(CommonWindow):
             # 有正在做的待办
             if doing:
                 # 当前正在做的
-                result.append(("class:common.pink", f" * {doing}...{self._get_progress_info()}\n"))
-                # 展示列表
-                for todo in self.todo_lines:
-                    status = todo.status
-                    if status == "completed":
-                        result.append(("class:common.gray", f"  ☒ {todo.content}\n"))
-                    elif status == "in_progress":
-                        result.append(("bold", f"  ☐ {todo.content}\n"))
-                    elif status == "pending":
-                        result.append(("", f"  ☐ {todo.content}\n"))
+                result.append(("class:common.pink", f" * {doing}...（{self._get_progress_info()})\n"))
+            # 展示列表
+            for todo in self.todo_lines:
+                status = todo.status
+                if status == "completed":
+                    result.append(("class:common.gray", f"  ☒ {todo.content}\n"))
+                elif status == "in_progress":
+                    result.append(("bold", f"  ☐ {todo.content}\n"))
+                elif status == "pending":
+                    result.append(("", f"  ☐ {todo.content}\n"))
         elif self._model_output_start_time is not None:
             # 没有待办列表, 随机选择一个进度文本
-            result.append(("class:common.pink", f" * {self._random_progress_text}{self._get_progress_info()}"))
+            result.append(("class:common.pink", f" * {self._random_progress_text}({self._get_progress_info()})"))
         return [FormattedText(result)]
 
     async def _cleanup_old_blocks(self):
@@ -256,7 +358,7 @@ class OutputWindow(CommonWindow):
             
             agent_logger.debug(f"清理了 {remove_count} 个旧的输出块")
 
-    async def _process_user_interrupt(self, event: Event):
+    async def _process_user_cancel(self, event: Event):
         """处理用户手动中断事件"""
         # 主要还是对Pending中的消息进行处理
         pending_inputs = await GlobalState.get_user_input_queue().pop_all()

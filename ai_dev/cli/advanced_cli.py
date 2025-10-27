@@ -10,11 +10,12 @@ import uuid
 
 import click
 
+from typing import Any
+
 from prompt_toolkit import Application
 from prompt_toolkit.clipboard import ClipboardData
 from prompt_toolkit.layout import Layout, HSplit, Window
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
-from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.application import get_app
 from prompt_toolkit.styles import Style
 from prompt_toolkit.keys import Keys
@@ -22,10 +23,10 @@ from prompt_toolkit.keys import Keys
 from ai_dev.components.choice_window import ChoiceWindow
 from ai_dev.components.input_window import InputWindow
 from ai_dev.models.model_manager import ModelManager
+from ai_dev.permission.permission_manager import PermissionManager
 from ..core.assistant import AIProgrammingAssistant
 from ..core.global_state import GlobalState
 from ..core.config_manager import ConfigManager
-from ..core.interruption_manager import InterruptionManager
 from ..core.event_manager import Event, EventType, event_manager
 from ..commands import CommandRegistry
 from ..commands.clear import ClearCommand
@@ -44,7 +45,6 @@ class AdvancedCLI:
         self.working_directory = working_directory
         self.assistant: AIProgrammingAssistant | None = None
         self.command_registry = None
-        self.interruption_manager = None
         self.thread_id = None
 
         # 输出捕获器
@@ -92,8 +92,8 @@ class AdvancedCLI:
             import time
 
             # 创建中断事件
-            interrupt_event = Event(
-                event_type=EventType.INTERRUPT,
+            user_cancel_event = Event(
+                event_type=EventType.USER_CANCEL,
                 data={
                     "source": "keyboard",
                 },
@@ -102,10 +102,11 @@ class AdvancedCLI:
             )
 
             # 发布中断事件
-            await event_manager.publish(interrupt_event)
-            agent_logger.info(f"全局中断事件已发布: {interrupt_event}")
+            await event_manager.publish(user_cancel_event)
+            agent_logger.info(f"全局中断事件已发布: {user_cancel_event}")
 
-        @self.normal_kb.add("c-x")
+        # 复制选中内容
+        @self.normal_kb.add(Keys.ControlX)
         async def handle_copy(event):
             layout = event.app.layout
             if layout.has_focus(self.output_window.window):
@@ -121,6 +122,15 @@ class AdvancedCLI:
                     import pyperclip
                     """复制到系统剪贴板"""
                     pyperclip.copy(clipboard_data.text)
+
+        # 切换显示模式
+        @self.normal_kb.add(Keys.ControlO)
+        async def change_display_mode(event):
+            if GlobalState.get_show_output_details():
+                GlobalState.set_show_output_details(False)
+            else:
+                GlobalState.set_show_output_details(True)
+            event.app.invalidate()
 
 
     def _initialize_legacy_components(self):
@@ -140,12 +150,12 @@ class AdvancedCLI:
         model_manager = ModelManager()
         GlobalState.set_model_manager(model_manager)
 
+        # 注册全局的权限管理器
+        permission_manager = PermissionManager()
+        GlobalState.set_permission_manager(permission_manager)
+
         # 初始化命令注册表
         self.command_registry = self._initialize_command_registry()
-
-        # 初始化中断管理器
-        self.interruption_manager = InterruptionManager()
-
 
         # 初始化助手
         self.assistant = AIProgrammingAssistant(
@@ -269,23 +279,22 @@ class AdvancedCLI:
             })
             return True
 
-    async def process_stream_input(self, user_input: str):
+    async def process_stream_input(self, user_input_or_resume: Any, resume_task_ids: list = None) -> Any:
         """流式处理用户输入"""
         if not self.assistant:
             await self.output_window.add_common_block("class:error", "助手未初始化")
             return
 
-        agent_logger.log_agent_start(MAIN_AGENT_ID, user_input)
+        agent_logger.log_agent_start(MAIN_AGENT_ID, user_input_or_resume)
 
         try:
 
-            async for chunk in self.assistant.process_input_stream(user_input,
-                                                                   thread_id=self.thread_id):
+            async for chunk in self.assistant.process_input_stream(user_input_or_resume,
+                                                                   thread_id=self.thread_id,
+                                                                   resume_task_ids=resume_task_ids):
                 # 中断
-                if self.interruption_manager.is_interruption_chunk(chunk):
-                    await self.interruption_manager.handle_interruption(
-                        chunk["type"], chunk["interrupt_info"]
-                    )
+                if "_is_interrupt_" in chunk and chunk["_is_interrupt_"] == True:
+                    await self.choice_window.append_interruption(chunk.get("interrupt_info"))
 
                 # 异常
                 elif chunk.get("type") == "error":
@@ -311,16 +320,9 @@ class AdvancedCLI:
         except Exception as e:
             await self.output_window.add_common_block("class:error", f"处理流时出错: {str(e)}")
             agent_logger.log_agent_error(MAIN_AGENT_ID, str(e), e, {
-                "user_input": user_input,
+                "user_input": user_input_or_resume,
                 "stage": "stream_processing"
             })
-
-    def show_permission_request(self, choice_text: FormattedText, options: list):
-        """显示权限请求选择界面"""
-        self.choice_window.set_choice_content(choice_text)
-        self.choice_window.set_choice_options(options)
-        self.choice_window.set_show_choice(True)
-        self.re_construct_layout()
 
     def re_construct_layout(self):
         """根据状态重新构建layout内组件"""
@@ -391,6 +393,8 @@ class AdvancedCLI:
         output_task = asyncio.create_task(self._output_processing_loop())
         # 补偿Pending消息消费循环
         compensation_pending_task = asyncio.create_task(self.output_window.compensation_pending_input_loop())
+        # 开启任务执行中呼吸灯
+        task_breathe_color_task = asyncio.create_task(self.output_window.task_breathe_color_controller_loop())
 
         try:
 
@@ -480,9 +484,17 @@ class AdvancedCLI:
             except asyncio.CancelledError:
                 pass
 
+            # 停止pending监听
             compensation_pending_task.cancel()
             try:
                 await compensation_pending_task
+            except asyncio.CancelledError:
+                pass
+
+            # 停止呼吸灯
+            task_breathe_color_task.cancel()
+            try:
+                await task_breathe_color_task
             except asyncio.CancelledError:
                 pass
 

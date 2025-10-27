@@ -2,13 +2,14 @@
 文件编辑工具
 """
 
-from typing import Any, Dict, Type, Literal, Generator
-from .base import StreamTool, CommonToolArgs
+from typing import Any, Dict, Type, Literal, Generator, AsyncGenerator
+from ai_dev.tools.base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
 from ai_dev.utils.patch import get_patch
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.freshness import check_freshness, update_agent_edit_time
+from .prompt_cn import prompt
 
 
 class FileEditTool(StreamTool):
@@ -16,54 +17,7 @@ class FileEditTool(StreamTool):
 
     # LangChain BaseTool要求的属性
     name: str = "FileEditTool"
-    description: str =  f"""This is a tool for editing files. For moving or renaming files, you should generally use the BashExecuteTool tool with the 'mv' command instead. For larger edits, use the Write tool to overwrite files.
-
-Before using this tool:
-
-1. Use the FileReadTool tool to understand the file's contents and context
-
-2. Verify the directory path is correct (only applicable when creating new files):
-   - Use the FileListTool tool to verify the parent directory exists and is the correct location
-
-To make a file edit, provide the following:
-1. file_path: The absolute path to the file to modify (must be absolute, not relative)
-2. old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)
-3. new_string: The edited text to replace the old_string
-
-The tool will replace ONE occurrence of old_string with new_string in the specified file.
-
-CRITICAL REQUIREMENTS FOR USING THIS TOOL:
-
-1. UNIQUENESS: The old_string MUST uniquely identify the specific instance you want to change. This means:
-   - Include AT LEAST 3-5 lines of context BEFORE the change point
-   - Include AT LEAST 3-5 lines of context AFTER the change point
-   - Include all whitespace, indentation, and surrounding code exactly as it appears in the file
-
-2. SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:
-   - Make separate calls to this tool for each instance
-   - Each call must uniquely identify its specific instance using extensive context
-
-3. VERIFICATION: Before using this tool:
-   - Check how many instances of the target text exist in the file
-   - If multiple instances exist, gather enough context to uniquely identify each one
-   - Plan separate tool calls for each instance
-
-WARNING: If you do not follow these requirements:
-   - The tool will fail if old_string matches multiple locations
-   - The tool will fail if old_string doesn't match exactly (including whitespace)
-   - You may change the wrong instance if you don't include enough context
-
-When making edits:
-   - Ensure the edit results in idiomatic, correct code
-   - Do not leave the code in a broken state
-   - Always use absolute file paths (starting with /)
-
-If you want to create a new file, use:
-   - A new file path, including dir name if needed
-   - An empty old_string
-   - The new file's contents as new_string
-
-Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each."""
+    description: str = prompt
 
     @property
     def show_name(self) -> str:
@@ -84,7 +38,7 @@ Remember: when making multiple file edits in a row to the same file, you should 
 
     args_schema: Type[BaseModel] = FileEditArgs
 
-    def _execute_tool(self, file_path: str, old_string: str, new_string: str = None, **kwargs) -> Generator[Dict[str, Any], None, None]:
+    async def _execute_tool(self, file_path: str, old_string: str, new_string: str = None, **kwargs) -> AsyncGenerator[dict, None]:
         """执行文件编辑"""
         safe_path = self._safe_join_path(file_path)
         old_file_exists = safe_path.exists()
@@ -121,7 +75,9 @@ Remember: when making multiple file edits in a row to the same file, you should 
 
         yield {
             "type": "tool_end",
+            "source": kwargs.get("context").get("agent_id"),
             "result_for_llm": result_data,
+            "context": kwargs.get("context")
         }
 
 
@@ -190,8 +146,8 @@ Remember: when making multiple file edits in a row to the same file, you should 
         relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
         return f"{relative_path}"
 
-    def _get_success_message(self, llm_result) -> str:
-        hunks = llm_result.get("patch")
+    def _get_success_message(self, result_for_show: Any) -> str:
+        hunks = result_for_show.get("patch")
         total_add = 0
         total_remove = 0
         for hunk in hunks if hunks else []:
@@ -201,4 +157,4 @@ Remember: when making multiple file edits in a row to the same file, you should 
                 elif line.startswith('+'):
                     total_add += 1
 
-        return f"Updated {llm_result.get('file_path')} with {total_add} additions and {total_remove} removal"
+        return f"Updated {result_for_show.get('file_path')} with {total_add} additions and {total_remove} removal"

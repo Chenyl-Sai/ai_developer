@@ -1,12 +1,15 @@
 """
 Agent管理器
 """
-from typing import Optional
+from typing import Optional, Any
 from dotenv import load_dotenv
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import InMemorySaver
 
-from ..models.state import AgentState
+from .global_state import GlobalState
+from ..models.state import MyAgentState
 from .re_act_agent import ReActAgent, SubAgentState
-from ..constants.prompt import get_system_prompt
+from ..constants.prompt_cn import get_system_prompt
 from ..utils.logger import agent_logger
 from ..utils.tool import get_available_tools
 from ai_dev.constants.product import MAIN_AGENT_ID, MAIN_AGENT_NAME
@@ -20,7 +23,7 @@ class AIProgrammingAssistant:
         load_dotenv()
 
         # 初始化状态
-        self.state = AgentState(working_directory=working_directory)
+        self.state = MyAgentState(working_directory=working_directory)
 
         # 延迟初始化Agent
         self.system_prompt = None
@@ -36,14 +39,15 @@ class AIProgrammingAssistant:
             self.main_agent = ReActAgent(
                 name=MAIN_AGENT_NAME,
                 system_prompt=self.system_prompt,
-                tools=await get_available_tools(),
+                tools=get_available_tools(),
                 context={
                     "agent_type": "main",
                     "working_directory": self.state.working_directory
                 }
             )
 
-    async def process_input_stream(self, user_input: str, thread_id: Optional[str] = None):
+    async def process_input_stream(self, user_input_or_resume: Any, thread_id: Optional[str] = None,
+                                   resume_task_ids: list = None) -> Any:
         """流式处理用户输入"""
         try:
             # 确保SubAgentGraph已初始化
@@ -53,20 +57,21 @@ class AIProgrammingAssistant:
             config = {
                 "configurable": {
                     "thread_id": thread_id,
-                    "agent_id": MAIN_AGENT_ID
+                    "agent_id": MAIN_AGENT_ID,
+                    "resume_task_ids": resume_task_ids
                 },
                 "recursion_limit": 1000
             }
 
             # 使用真正的流式输出，传递thread_id配置
-            async for chunk in self.main_agent.run_stream(user_input, config=config):
+            async for chunk in self.main_agent.run_stream(user_input_or_resume, MAIN_AGENT_ID, config=config):
                 yield chunk
 
 
         except Exception as e:
             error_msg = f"处理过程中出现错误: {str(e)}"
             agent_logger.log_agent_error(MAIN_AGENT_ID, error_msg, e, {
-                "user_input": user_input,
+                "user_input": user_input_or_resume,
                 "stage": "agent_processing"
             })
             yield {"type": "error", "error": error_msg}
@@ -88,4 +93,4 @@ class AIProgrammingAssistant:
 
     def reset_conversation(self):
         """重置对话"""
-        self.state = AgentState(working_directory=self.state.working_directory)
+        self.state = MyAgentState(working_directory=self.state.working_directory)

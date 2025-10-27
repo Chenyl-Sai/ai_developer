@@ -2,24 +2,21 @@
 文件读取工具
 """
 
-from typing import Any, Dict, Type, Generator
-from .base import StreamTool, CommonToolArgs
+from typing import Any, Dict, Type, AsyncGenerator
+from ai_dev.tools.base import StreamTool, CommonToolArgs
 from pydantic import BaseModel, Field
 
-from ..core.global_state import GlobalState
+from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.freshness import update_read_time
-
-MAX_LINES_TO_READ = 2000
-MAX_LINE_LENGTH = 2000
-
-DESCRIPTION = f"Reads a file from the local filesystem. The file_path parameter must be an absolute path, not a relative path. By default, it reads up to {MAX_LINES_TO_READ} lines starting from the beginning of the file. You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters. Any lines longer than {MAX_LINE_LENGTH} characters will be truncated. For image files, the tool will display the image for you. For Jupyter notebooks (.ipynb files), use the NotebookReadTool instead."
+from .prompt_cn import prompt
+from .constant import MAX_LINE_LENGTH, MAX_LINES_TO_READ
 
 class FileReadTool(StreamTool):
     """文件读取工具"""
 
     # LangChain BaseTool要求的属性
     name: str = "FileReadTool"
-    description: str = DESCRIPTION
+    description: str = prompt
 
     class FileReadArgs(CommonToolArgs):
         file_path: str = Field(description="The absolute path to the file to read")
@@ -36,7 +33,7 @@ class FileReadTool(StreamTool):
     def is_readonly(self) -> bool:
         return True
 
-    def _execute_tool(self, file_path: str, offset: int = 1, limit: int = None, **kwargs) -> Generator[Dict[str, Any], None, None]:
+    async def _execute_tool(self, file_path: str, offset: int = 1, limit: int = None, **kwargs) -> AsyncGenerator[dict, None]:
         """执行文件读取"""
         safe_path = self._safe_join_path(file_path)
 
@@ -89,7 +86,9 @@ class FileReadTool(StreamTool):
 
         yield {
             "type": "tool_end",
+            "source": kwargs.get("context").get("agent_id"),
             "result_for_llm": result_data,
+            "context": kwargs.get("context")
         }
 
     def _format_args(self, kwargs: Dict[str, Any]) -> str:
@@ -97,11 +96,11 @@ class FileReadTool(StreamTool):
         relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
         return f"{relative_path}"
 
-    def _get_success_message(self, result: Dict[str, Any]) -> str:
+    def _get_success_message(self, result_for_show: Any) -> str:
         """生成文件读取的成功消息"""
-        line_count = result.get("line_count", 0)
-        total_lines = result.get("total_lines", 0)
-        start_line = result.get("start_line", 1)
+        line_count = result_for_show.get("line_count", 0)
+        total_lines = result_for_show.get("total_lines", 0)
+        start_line = result_for_show.get("start_line", 1)
 
         if line_count == total_lines:
             return f"Read <b>{line_count}</b> lines"

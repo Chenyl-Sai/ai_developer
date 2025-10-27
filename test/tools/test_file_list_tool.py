@@ -5,15 +5,14 @@
 
 import unittest
 import tempfile
-import os
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # 添加项目路径到 sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ai_dev.tools.file_list import FileListTool
+from ai_dev.tools.file_list.file_list import FileListTool
 
 
 class TestFileListTool(unittest.TestCase):
