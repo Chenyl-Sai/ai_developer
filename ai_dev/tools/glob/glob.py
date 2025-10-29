@@ -4,25 +4,27 @@
 
 from pathlib import Path
 from typing import Any, Dict, List, Type, Generator, AsyncGenerator
-from ai_dev.tools.base import StreamTool, CommonToolArgs
+
+from langchain_core.callbacks import Callbacks
+from langchain_core.tools import BaseTool
+
+from ai_dev.utils.tool import CommonToolArgs
 from pydantic import BaseModel, Field
 from .prompt_cn import prompt, prompt_too_many_files
 from .constant import MAX_FILES
+from ...utils.file import get_absolute_path
+from ...utils.tool import tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler
 
-class GlobTool(StreamTool):
+
+class GlobTool(BaseTool):
     """Glob工具 - 根据模式匹配文件"""
 
     # LangChain BaseTool要求的属性
     name: str = "GlobTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
 
-    @property
-    def show_name(self) -> str:
-        return "Search"
-
-    @property
-    def is_readonly(self) -> bool:
-        return True
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     @property
     def is_parallelizable(self) -> bool:
@@ -34,11 +36,11 @@ class GlobTool(StreamTool):
 
     args_schema: Type[BaseModel] = GlobArgs
 
-    async def _execute_tool(self, directory: str, pattern: str, **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, directory: str, pattern: str, **kwargs) -> Any:
         """执行文件模式匹配"""
         import json
 
-        safe_dir = self._safe_join_path(directory)
+        safe_dir = get_absolute_path(directory)
 
         if not safe_dir.exists():
             raise FileNotFoundError(f"Directory not found: {directory}")
@@ -67,15 +69,6 @@ class GlobTool(StreamTool):
 
         result_data += json.dumps(files, ensure_ascii=False, indent=2)
 
-        yield {
-            "type": "tool_end",
-            "source": kwargs.get("context").get("agent_id"),
-            "result_for_llm": result_data,
-            "context": kwargs.get("context"),
-            "result_for_show": {
-                "found_file_count": len(files),
-            }
+        return result_data, {
+            "found_file_count": found_file_count,
         }
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        return f"Found <b>{result_for_show.get('found_file_count')}</b> files"

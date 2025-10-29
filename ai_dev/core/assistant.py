@@ -11,7 +11,7 @@ from ..models.state import MyAgentState
 from .re_act_agent import ReActAgent, SubAgentState
 from ..constants.prompt_cn import get_system_prompt
 from ..utils.logger import agent_logger
-from ..utils.tool import get_available_tools
+from ..utils.tool import get_all_tools
 from ai_dev.constants.product import MAIN_AGENT_ID, MAIN_AGENT_NAME
 
 
@@ -39,7 +39,7 @@ class AIProgrammingAssistant:
             self.main_agent = ReActAgent(
                 name=MAIN_AGENT_NAME,
                 system_prompt=self.system_prompt,
-                tools=get_available_tools(),
+                tools=await get_all_tools(),
                 context={
                     "agent_type": "main",
                     "working_directory": self.state.working_directory

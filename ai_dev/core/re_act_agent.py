@@ -12,23 +12,22 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessageChunk, AIMessage, ToolCall
 from langchain_core.tools import BaseTool
-from langgraph.types import Command, Interrupt, interrupt
+from langgraph.types import Command, interrupt
 
 from .event_manager import event_manager, Event, EventType
 from .global_state import GlobalState
 from ..constants.product import MAIN_AGENT_NAME, MAIN_AGENT_ID
 from ..models.state import MyAgentState, accept_new_merger
-from ai_dev.permission.permission_manager import PermissionManager, PermissionDecision, UserPermissionChoice
-from ..tools import MyBaseTool
+from ai_dev.permission.permission_manager import PermissionDecision, UserPermissionChoice
 from ..utils.logger import agent_logger
 from ..utils.compact import check_auto_compact
 from ..utils.message import estimate_token_for_chunk_message
+from ..utils.reminder import reminder_service
 from ..utils.tool import get_tool_by_name
 
 class SubAgentState(MyAgentState):
     """SubAgent专用状态类"""
     tool_calls: List[Dict[str, Any]] = []
-    current_iteration: int = 0
     agent_id: Optional[str] = None
     user_canceled: Annotated[bool, accept_new_merger] = False
 
@@ -76,6 +75,7 @@ class ReActAgent:
         self._user_canceled = False
         event_manager.subscribe(EventType.USER_CANCEL, self._process_user_cancel)
 
+        # 用户中断恢复时，需要根据task编号找到对应执行的那个节点
         self._resume_task_process_lock = asyncio.Lock()
         self.resumed_tasks = []
 
@@ -86,11 +86,6 @@ class ReActAgent:
         """生成唯一的agent_id"""
         import uuid
         return f"sub_agent_{uuid.uuid4().hex[:8]}"
-
-    def _build_system_message(self) -> SystemMessage:
-        """构建系统消息 - 直接使用传入的系统提示词"""
-        system_prompt = "\n".join(self.system_prompt)
-        return SystemMessage(content=system_prompt)
 
     def _build_graph(self) -> CompiledStateGraph:
         """构建LangGraph状态图"""
@@ -182,6 +177,8 @@ class ReActAgent:
         new_user_inputs = await self._process_user_input_pending(state)
         if new_user_inputs:
             messages.extend(new_user_inputs)
+        # 提醒消息
+        reminders = await self._build_reminders(state)
 
         # 调用模型之前判断是否有Event.INTERRUPT事件，如果有则返回退出标记
         if self._user_canceled:
@@ -189,8 +186,8 @@ class ReActAgent:
                 "user_canceled": True,
             }
 
-        # 不将系统消息拼接到state.message中，而是请求之前直接拼接
-        request_messages = [self._build_system_message()] + messages
+        # 不将系统消息和提示消息拼接到state.message中，而是请求之前直接拼接
+        request_messages = [self._build_system_message()] + messages + reminders
         agent_logger.log_model_call(state.agent_id, self.model_name, request_messages)
         ai_message = await self.bound_model.ainvoke(request_messages)
         # 记录模型响应信息
@@ -201,9 +198,27 @@ class ReActAgent:
             "messages": ai_message if not compacted else {
                 "_replace": True,
                 "messages": messages + [ai_message]
-            },
-            "current_iteration": state.current_iteration + 1
+            }
         }
+
+    def _build_system_message(self) -> SystemMessage:
+        """构建系统消息 - 直接使用传入的系统提示词"""
+        system_prompt = "\n".join(self.system_prompt)
+        return SystemMessage(content=system_prompt)
+
+    async def _build_reminders(self, state: SubAgentState) -> list:
+        result = []
+        # 待办提醒
+        todo_reminder = await reminder_service.get_todo_reminder(state.agent_id)
+        if todo_reminder:
+            result.append(HumanMessage(content=f"<system-reminder>\n{todo_reminder.get('content')}\n</system-reminder>"))
+        # 长session提醒
+        performance_reminder = await reminder_service.get_performance_reminder()
+        if performance_reminder:
+            result.append(HumanMessage(content=f"<system-reminder>\n{performance_reminder.get('content')}\n</system-reminder>"))
+
+        return result
+
 
     async def _check_permissions_node(self, state: SubAgentState):
         """权限检查节点 - 检查工具执行权限"""
@@ -344,7 +359,7 @@ class ReActAgent:
                         "_node_index": index,
                     }
                     try:
-                        from ai_dev.utils.tool import task_tool
+                        task_tool = await get_tool_by_name("TaskTool")
                         tool_result = await task_tool.ainvoke(copied_tool_call)
                     except GraphInterrupt:
                         raise
@@ -390,13 +405,13 @@ class ReActAgent:
                 "agent_id": state.agent_id,
                 "tool_id": copied_tool_call.get("id"),
             }
-            tool: MyBaseTool = get_tool_by_name(copied_tool_call["name"])
+            tool = await get_tool_by_name(copied_tool_call["name"])
             if tool is None:
                 state.messages.append(ToolMessage(
                     content="工具不存在",
                     tool_call_id=copied_tool_call.get("id"),
                 ))
-            if tool.is_parallelizable:
+            if hasattr(tool, 'is_parallelizable') and tool.is_parallelizable:
                 # 可并行工具：创建异步任务
                 task = asyncio.create_task(
                     tool.ainvoke(copied_tool_call)

@@ -1,3 +1,4 @@
+import json
 import time
 
 from prompt_toolkit.formatted_text import FormattedText, AnyFormattedText, HTML, merge_formatted_text
@@ -7,6 +8,7 @@ from async_lru import alru_cache
 
 from ai_dev.constants.product import PRODUCT_NAME
 from ai_dev.core.global_state import GlobalState
+from ai_dev.utils.file import get_absolute_path
 from ai_dev.utils.todo import TodoItemStorage
 from ai_dev.utils.logger import agent_logger
 
@@ -25,7 +27,7 @@ class MessageBlock(BaseModel):
 class ToolBlock(BaseModel):
     id: str
     tool_name: str
-    tool_args: str | None
+    tool_args: dict[str, Any] | None
     status: str | None = None
     message: str | None = None
     exec_result_details: Any | None = None
@@ -34,7 +36,7 @@ class ToolBlock(BaseModel):
 class TaskBlock(BaseModel):
     id: str
     tool_name: str
-    tool_args: dict | None
+    tool_args: dict[str, Any] | None
     task_id: str | None = None # 用于定位子任务输出所属的父节点
     status: str | None = None
     message: str | None = None # 总结性消息，共调用了多少工具、耗时、token消耗等等
@@ -105,10 +107,10 @@ async def format_tool_block(block: ToolBlock, is_sub_agent_tool: bool=False) -> 
     html_text = None
     if tool_status == "start":
         # 展示标题
-        html_text = f"  ⎿  <bold>{block.tool_name}</bold>" if is_sub_agent_tool \
-            else f"<style fg='#000000'>⏺</style> <bold>{block.tool_name}</bold>"
+        html_text = f"  ⎿  <bold>{_format_show_tool_name(block)}</bold>" if is_sub_agent_tool \
+            else f"<style fg='#000000'>⏺</style> <bold>{_format_show_tool_name(block)}</bold>"
         if block.tool_args:
-            escaped_message = _smart_escape_html(block.tool_args)
+            escaped_message = _smart_escape_html(_format_show_tool_args(block))
             html_text += f"({escaped_message})"
         html_text += " \n"
         # 展示过程中的额外消息
@@ -122,16 +124,17 @@ async def format_tool_block(block: ToolBlock, is_sub_agent_tool: bool=False) -> 
     # 工具执行成功
     elif tool_status == "success":
         # 展示标题，图标变色
-        html_text = f"  ⎿  <bold>{block.tool_name}</bold>" if is_sub_agent_tool \
-            else f"<style fg='#33ff66'>⏺</style> <bold>{block.tool_name}</bold>"
+        html_text = f"  ⎿  <bold>{_format_show_tool_name(block)}</bold>" if is_sub_agent_tool \
+            else f"<style fg='#33ff66'>⏺</style> <bold>{_format_show_tool_name(block)}</bold>"
         if block.tool_args:
-            escaped_message = _smart_escape_html(block.tool_args)
+            escaped_message = _smart_escape_html(_format_show_tool_args(block))
             html_text += f"({escaped_message})"
         html_text += " \n"
         # 展示总结性的信息
-        if block.message:
+        summary = _format_show_tool_summary(block)
+        if summary:
             # 智能转义：只转义非HTML标签的内容
-            escaped_message = _smart_escape_html(block.message)
+            escaped_message = _smart_escape_html(summary)
             html_text += f"{'     ' if is_sub_agent_tool else '  ⎿  '}{escaped_message}"
         html_text += " \n"
         html = _safe_html_render(html_text, block)
@@ -144,10 +147,10 @@ async def format_tool_block(block: ToolBlock, is_sub_agent_tool: bool=False) -> 
     # 工具执行失败
     elif tool_status == "error":
         # 展示标题，图标变色
-        html_text = f"  ⎿  <bold>{block.tool_name}</bold>" if is_sub_agent_tool \
-            else f"<style fg='#ff0000'>⏺</style> <bold>{block.tool_name}</bold>"
+        html_text = f"  ⎿  <bold>{_format_show_tool_name(block)}</bold>" if is_sub_agent_tool \
+            else f"<style fg='#ff0000'>⏺</style> <bold>{_format_show_tool_name(block)}</bold>"
         if block.tool_args:
-            escaped_message = _smart_escape_html(block.tool_args)
+            escaped_message = _smart_escape_html(_format_show_tool_args(block))
             html_text += f"({escaped_message})"
         html_text += " \n"
         # 展示总结性的信息
@@ -179,7 +182,7 @@ async def format_task_tool_block(block: TaskBlock, breathe_color_controller: dic
     elif block.status == 'error':
         color = '#FF0000'
     # 展示标题及prompt块
-    html_text = f"<style fg='{color}'>⏺</style> <bold>{block.tool_name}({block.task_id})</bold>"
+    html_text = f"<style fg='{color}'>⏺</style> <bold>Task({block.task_id})</bold>"
     if block.tool_args:
         escaped_message = _smart_escape_html(block.tool_args.get("description"))
         html_text += f"({escaped_message})"
@@ -249,12 +252,12 @@ async def format_tool_exec_detail(block: ToolBlock) -> AnyFormattedText:
     # 文件编辑 & 文件写入， 需要展示修改对比
     if tool_name in ["FileEditTool", "FileWriteTool"]:
         if block.exec_result_details:
-            patch = block.exec_result_details.get("patch")
+            patch = json.loads(block.exec_result_details).get("patch")
             if patch:
                 return FormattedText(render_hunks(patch))
     # Bash命令执行
     elif tool_name in ["BashExecuteTool"]:
-        return format_bash_execute_tool_output(block.exec_result_details)
+        return format_bash_execute_tool_output(json.loads(block.exec_result_details))
 
     return None
 
@@ -595,3 +598,104 @@ def _format_generic_request(request_info: dict) -> tuple[FormattedText, list]:
         f"3. No, and tell {PRODUCT_NAME} what to do differently",
     ]
     return FormattedText(result), options
+
+def _format_show_tool_name(block: ToolBlock) -> str:
+    tool_name = block.tool_name
+    if tool_name == "BashExecuteTool":
+        return "Bash"
+    elif tool_name == "FileEditTool":
+        return "Edit"
+    elif tool_name == "FileListTool":
+        return "List"
+    elif tool_name == "FileReadTool":
+        return "Read"
+    elif tool_name == "FileWriteTool":
+        return "Write"
+    elif tool_name in ["GlobTool", "GrepTool"]:
+        return "Search"
+    else:
+        return tool_name
+
+def _format_show_tool_args(block: ToolBlock) -> str:
+    tool_name = block.tool_name
+    if tool_name == "BashExecuteTool":
+        command = block.tool_args.get("command")
+        MAX_SHOW_LINES = 3
+        MAX_CHARS_PER_LINE = 200
+        if not command:
+            return ""
+
+        # 按换行符分割字符串
+        lines = command.split('\n')
+        truncated_lines = lines[:MAX_SHOW_LINES]
+
+        # 对每一行进行字符数截取
+        result_lines = []
+        for line in truncated_lines:
+            # 如果行长度超过限制，则截取并在末尾添加省略号
+            if len(line) > MAX_CHARS_PER_LINE:
+                truncated_line = line[:MAX_CHARS_PER_LINE] + "..."
+            else:
+                truncated_line = line
+            result_lines.append(truncated_line)
+
+        # 如果原始行数超过最大行数，在最后添加省略号表示还有更多内容
+        if len(lines) > MAX_SHOW_LINES:
+            result_lines.append("...")
+
+        # 用换行符连接所有行
+        return '\n'.join(result_lines)
+    elif tool_name in ["FileEditTool", "FileReadTool", "FileWriteTool"]:
+        safe_path = get_absolute_path(block.tool_args.get("file_path"))
+        relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
+        return f"{relative_path}"
+    elif tool_name == "FileListTool":
+        return block.tool_args.get("path")
+    else:
+        text = ""
+        if block.tool_args:
+            for key, value in block.tool_args.items():
+                if key not in ["context"]:
+                    text += f" {key} : {value}\n"
+        return text
+
+def _format_show_tool_summary(block: ToolBlock) -> str:
+    tool_name = block.tool_name
+    if tool_name == "FileEditTool":
+        edit_result = json.loads(block.exec_result_details)
+        hunks = edit_result.get("patch")
+        total_add = 0
+        total_remove = 0
+        for hunk in hunks if hunks else []:
+            for line in hunk["lines"]:
+                if line.startswith('-'):
+                    total_remove += 1
+                elif line.startswith('+'):
+                    total_add += 1
+
+        return f"Updated {edit_result.get('file_path')} with {total_add} additions and {total_remove} removal"
+    elif tool_name in ["FileListTool", "GlobTool", "GrepTool"]:
+        return f"Found <b>{block.exec_result_details.get('found_file_count', 0)}</b> files"
+    elif tool_name == "FileReadTool":
+        result_for_show = json.loads(block.exec_result_details)
+        """生成文件读取的成功消息"""
+        line_count = result_for_show.get("line_count", 0)
+        total_lines = result_for_show.get("total_lines", 0)
+        start_line = result_for_show.get("start_line", 1)
+
+        if line_count == total_lines:
+            return f"Read <b>{line_count}</b> lines"
+        else:
+            end_line = start_line + line_count - 1
+            return f"Read <b>{line_count}</b> lines (lines {start_line}-{end_line} of {total_lines})"
+    elif tool_name == "FileWriteTool":
+        result_for_show = json.loads(block.exec_result_details)
+        hunks = result_for_show.get("patch")
+        total_add = 0
+        for hunk in hunks if hunks else []:
+            total_add += len(hunk["lines"])
+
+        return f"Wrote <bold>{total_add}</bold> lines to <bold>{result_for_show.get('file_path')}</bold>"
+    else:
+        return ""
+

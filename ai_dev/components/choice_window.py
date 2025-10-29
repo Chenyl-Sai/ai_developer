@@ -50,10 +50,7 @@ class ChoiceWindow(CommonWindow):
         # 如果当前没有任务，直接展示
         if self.current_task is None:
             try:
-                agent_logger.info(f"Task count befor get {self.interruptions.qsize()}")
                 self.current_task = self.interruptions.get_nowait()
-                agent_logger.info(f"Task count after get {self.interruptions.qsize()}")
-                agent_logger.info(f"Current Task {self.current_task}")
             except:
                 pass
         self.cli.re_construct_layout()
@@ -102,7 +99,6 @@ class ChoiceWindow(CommonWindow):
 
     async def _handle_choice_input(self, choice: str):
         """处理选择输入"""
-        agent_logger.debug(f"[User select] {choice}, [Queue size]: {self.interruptions.qsize()}")
         if choice not in ['1', '2', '3']:
             await self.cli.output_window.add_common_block("class:error", "❌ 请输入 1、2 或 3")
             return
@@ -150,10 +146,8 @@ class ChoiceWindow(CommonWindow):
             # 还有剩下的继续获取新的中断
             try:
                 self.current_task = self.interruptions.get_nowait()
-                agent_logger.debug(f"[New Task] {self.current_task}")
                 self.refresh()
             except QueueEmpty:
-                agent_logger.debug(f"[No Task]")
                 self.current_task = None
 
         # 当所有中断都处理完成之后

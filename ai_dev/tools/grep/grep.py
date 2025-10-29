@@ -4,27 +4,28 @@
 
 from pathlib import Path
 from typing import Any, Dict, List, Type, Generator, AsyncGenerator
-from ai_dev.tools.base import StreamTool, CommonToolArgs
+
+from langchain_core.callbacks import Callbacks
+from langchain_core.tools import BaseTool
+
+from ai_dev.utils.tool import CommonToolArgs
 from pydantic import BaseModel, Field
 from ai_dev.core.global_state import GlobalState
 from .constant import MAX_FILES
 from .prompt_cn import prompt, prompt_too_many_files
+from ...utils.file import get_absolute_path
+from ...utils.tool import tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler
 
 
-class GrepTool(StreamTool):
+class GrepTool(BaseTool):
     """文件搜索工具"""
 
     # LangChain BaseTool要求的属性
     name: str = "GrepTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
 
-    @property
-    def show_name(self) -> str:
-        return "Search"
-
-    @property
-    def is_readonly(self) -> bool:
-        return True
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     @property
     def is_parallelizable(self) -> bool:
@@ -37,7 +38,7 @@ class GrepTool(StreamTool):
 
     args_schema: Type[BaseModel] = GrepArgs
 
-    async def _execute_tool(self, pattern: str, directory: str = "", file_pattern: str = "", **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, pattern: str, directory: str = "", file_pattern: str = "", **kwargs) -> Any:
         """执行文件搜索"""
         import subprocess
         import os
@@ -47,7 +48,7 @@ class GrepTool(StreamTool):
         if not directory:
             search_dir = GlobalState.get_working_directory()
         else:
-            safe_dir = self._safe_join_path(directory)
+            safe_dir = get_absolute_path(directory)
             if not safe_dir.exists():
                 raise FileNotFoundError(f"Directory not found: {directory}")
             if not safe_dir.is_dir():
@@ -89,27 +90,15 @@ class GrepTool(StreamTool):
                     result_data = prompt_too_many_files
                 result_data += json.dumps(results, ensure_ascii=False, indent=2)
 
-                yield {
-                    "type": "tool_end",
-                    "source": kwargs.get("context").get("agent_id"),
-                    "result_for_llm": result_data,
-                    "context": kwargs.get("context"),
-                    "result_for_show": {
-                        "found_file_count": len(results),
-                    }
+                return result_data, {
+                    "found_file_count": len(results),
                 }
 
             elif result.returncode == 1:
                 # 没有找到匹配的文件
                 result_data = "[]"
-                yield {
-                    "type": "tool_end",
-                    "source": kwargs.get("context").get("agent_id"),
-                    "result_for_llm": result_data,
-                    "context": kwargs.get("context"),
-                    "result_for_show": {
-                        "found_file_count": 0,
-                    }
+                return result_data, {
+                    "found_file_count": 0,
                 }
 
             else:
@@ -118,6 +107,3 @@ class GrepTool(StreamTool):
 
         except FileNotFoundError:
             raise RuntimeError("ripgrep command not found. Please install ripgrep (rg) to use this tool.")
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        return f"Found <b>{result_for_show.get('found_file_count')}</b> files"

@@ -7,17 +7,18 @@ from typing import Any, Type
 
 from langchain_core.messages import AIMessage, BaseMessage
 
-from ai_dev.tools.base import CommonToolArgs, MyBaseTool
+from ai_dev.utils.tool import CommonToolArgs
 from ai_dev.constants.product import MAIN_AGENT_ID
 from ai_dev.constants.prompt_cn import get_sub_agent_prompt
 from ai_dev.core.event_manager import event_manager, EventType
 from ai_dev.utils.logger import agent_logger
-from ai_dev.utils.subagent import get_sub_agent_by_name, get_agent_descriptions
+from ai_dev.utils.subagent import get_sub_agent_by_name
 from pydantic import BaseModel, Field
 from langgraph.config import get_stream_writer
+from langchain_core.tools import BaseTool
 from .prompt_cn import prompt
 
-class TaskTool(MyBaseTool):
+class TaskTool(BaseTool):
     """任务工具 - 用于创建子智能体处理复杂任务"""
 
     def __init__(self, **kwargs):
@@ -90,13 +91,13 @@ class TaskTool(MyBaseTool):
 
         agent_logger.info(f"Sub-agent {agent_name} found")
         # 如果子智能体配置指定了特定工具，则过滤工具列表
-        from ai_dev.utils.tool import get_available_tools, get_tools_by_names
+        from ai_dev.utils.tool import get_all_tools, get_tools_by_names
         if sub_agent_config.tools != '*' and '*' not in sub_agent_config.tools:
             tool_names = sub_agent_config.tools if isinstance(sub_agent_config.tools, list) else [
                 sub_agent_config.tools]
-            sub_agent_tools = get_tools_by_names(tool_names)
+            sub_agent_tools = await get_tools_by_names(tool_names)
         else:
-            sub_agent_tools =  get_available_tools()
+            sub_agent_tools = await get_all_tools()
 
         # 从tool列表中去掉task，防止出现递归
         sub_agent_tools = [tool for tool in sub_agent_tools if tool.name != self.name]

@@ -37,6 +37,7 @@ class OutputCapture:
         # 创建捕获包装器
         sys.stdout = self._create_capture_wrapper(self.original_stdout, 'stdout')
         sys.stderr = self._create_capture_wrapper(self.original_stderr, 'stderr')
+        print(f"[Capture_Wrapper] {sys.stderr}")
 
         # 设置异常处理
         sys.excepthook = self._exception_handler

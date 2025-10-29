@@ -4,32 +4,36 @@
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Generator, AsyncGenerator
-from ai_dev.tools.base import StreamTool, CommonToolArgs
+
+from langchain_core.tools import BaseTool
+from langchain_core.callbacks import Callbacks
+
+from ai_dev.utils.tool import CommonToolArgs
 import os
 from pydantic import BaseModel, Field
 from .prompt_cn import prompt
+from ...utils.file import get_absolute_path
+from ...utils.tool import tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler
 
 MAX_FILES = 100
 
-class FileListTool(StreamTool):
+class FileListTool(BaseTool):
     """LS工具 - 广度优先遍历目录下的所有文件和文件夹，返回树形结构"""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
     # LangChain BaseTool要求的属性
     name: str = "FileListTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
 
     class FileListArgs(CommonToolArgs):
         path: str = Field(description="The absolute path to the directory to list (must be absolute, not relative)")
 
     args_schema: Type[BaseModel] = FileListArgs
 
-    @property
-    def show_name(self) -> str:
-        return "LS"
-
-    @property
-    def is_readonly(self) -> bool:
-        return True
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     @property
     def is_parallelizable(self) -> bool:
@@ -40,7 +44,7 @@ class FileListTool(StreamTool):
 
         rules = [
             # 忽略以 "." 开头的文件/目录（但不包括当前目录 ".")
-            (path != "." and base.startswith(".")),
+            (path != "." and path != ".ai_dev" and base.startswith(".")),
 
             # 忽略 __pycache__ 目录本身
             (os.path.isdir(path) and base == "__pycache__"),
@@ -114,9 +118,9 @@ class FileListTool(StreamTool):
 
         return result
 
-    async def _execute_tool(self, path: str, **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, path: str, **kwargs: Any) -> Any:
         """执行目录遍历"""
-        safe_dir = self._safe_join_path(path)
+        safe_dir = get_absolute_path(path)
 
         if not safe_dir.exists():
             raise FileNotFoundError(f"Directory not found: {path}")
@@ -142,19 +146,6 @@ class FileListTool(StreamTool):
             result_data = f"There are more than {MAX_FILES} files in the repository. Use the LS tool (passing a specific path), BashExecuteTool tool, and other tools to explore nested directories. The first {MAX_FILES} files and directories are included below:\n\n"
             result_data += formatted_tree
             found_file_count = MAX_FILES
-
-        yield {
-            "type": "tool_end",
-            "source": kwargs.get("context").get("agent_id"),
-            "result_for_llm": result_data,
-            "context": kwargs.get("context"),
-            "result_for_show": {
-                "found_file_count": found_file_count,
-            }
+        return result_data, {
+            "found_file_count": found_file_count
         }
-
-    def _format_args(self, kwargs: Dict[str, Any]) -> str:
-        return kwargs.get("path")
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        return f"Found <b>{result_for_show.get('found_file_count', 0)}</b> files"

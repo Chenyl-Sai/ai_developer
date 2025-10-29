@@ -5,8 +5,11 @@ Bash 执行工具 - 支持异步执行、回调机制和命令队列
 import asyncio
 import subprocess
 from typing import Any, Dict, Optional, Callable, Type, Generator, AsyncGenerator
+
+from langchain_core.callbacks import Callbacks
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-from ai_dev.tools.base import StreamTool, CommonToolArgs
+from ai_dev.utils.tool import CommonToolArgs
 from ai_dev.utils.bash_executor import (
     BashExecutor,
     CommandResult,
@@ -15,6 +18,9 @@ from ai_dev.utils.bash_executor import (
 )
 from ai_dev.core.global_state import GlobalState
 from .prompt_cn import prompt
+from ...utils.logger import agent_logger
+from ...utils.tool import tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler
+
 
 class BashExecuteArgs(CommonToolArgs):
     """Bash 执行工具参数"""
@@ -22,19 +28,18 @@ class BashExecuteArgs(CommonToolArgs):
     propose: str = Field(description="Briefly explain the intention of the bash script executed this time")
     timeout: Optional[int] = Field(default=None, description="Optional timeout in seconds (max 600)")
 
-class BashExecuteTool(StreamTool):
+class BashExecuteTool(BaseTool):
     """Bash 执行工具"""
 
     name: str = "BashExecuteTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
     args_schema: Type[BaseModel] = BashExecuteArgs
+
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     # 全局执行器实例
     _executor: Optional[BashExecutor] = None
-
-    @property
-    def show_name(self) -> str:
-        return "Bash"
 
     @property
     def executor(self) -> BashExecutor:
@@ -44,7 +49,7 @@ class BashExecuteTool(StreamTool):
             self._executor.start_queue_processor()
         return self._executor
 
-    async def _execute_tool(self, **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
         """执行工具逻辑 - 同步等待命令完成并返回结果"""
         args = BashExecuteArgs(**kwargs)
 
@@ -55,17 +60,11 @@ class BashExecuteTool(StreamTool):
         use_queue = False
         if use_queue:
             # 对于队列执行，使用队列处理器
-            result_data = self._execute_with_queue(args, working_dir)
+            result_data = asyncio.run(self._execute_with_queue(args, working_dir))
         else:
             # 对于直接执行，直接运行命令
             result_data = self._execute_direct(args, working_dir)
-
-        yield {
-            "type": "tool_end",
-            "source": kwargs.get("context").get("agent_id"),
-            "result_for_llm": result_data,
-            "context": kwargs.get("context")
-        }
+        return result_data, {}
 
     def _execute_direct(self, args: BashExecuteArgs, working_dir: str) -> Dict[str, Any]:
         """直接执行命令"""
@@ -180,39 +179,6 @@ class BashExecuteTool(StreamTool):
             "execution_time": result.execution_time,
             "error_message": result.error_message
         }
-    def _format_args(self, kwargs: Dict[str, Any]) -> str:
-        command = kwargs.get("command")
-        MAX_SHOW_LINES = 3
-        MAX_CHARS_PER_LINE = 200
-        if not command:
-            return ""
-
-        # 按换行符分割字符串
-        lines = command.split('\n')
-        truncated_lines = lines[:MAX_SHOW_LINES]
-
-        # 对每一行进行字符数截取
-        result_lines = []
-        for line in truncated_lines:
-            # 如果行长度超过限制，则截取并在末尾添加省略号
-            if len(line) > MAX_CHARS_PER_LINE:
-                truncated_line = line[:MAX_CHARS_PER_LINE] + "..."
-            else:
-                truncated_line = line
-            result_lines.append(truncated_line)
-
-        # 如果原始行数超过最大行数，在最后添加省略号表示还有更多内容
-        if len(lines) > MAX_SHOW_LINES:
-            result_lines.append("...")
-
-        # 用换行符连接所有行
-        return '\n'.join(result_lines)
-
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        """生成成功消息"""
-        # 优先检查 stderr 和 error_message
-        return ""
 
 async def execute_bash_command_async(
     command: str,

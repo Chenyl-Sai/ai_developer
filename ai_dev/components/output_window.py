@@ -111,7 +111,9 @@ class OutputWindow(CommonWindow):
 
             # 工具消息
             elif chunk.get('type') == "tool_start":
-                if chunk['tool_name'] == "TaskTool":
+                if chunk['tool_name'] == "TodoWriteTool":
+                    return
+                elif chunk['tool_name'] == "TaskTool":
                     block = TaskBlock(id=chunk['tool_id'],
                                       task_id=chunk['task_id'],
                                       tool_name=chunk['tool_name'],
@@ -125,7 +127,7 @@ class OutputWindow(CommonWindow):
                 else:
                     block = ToolBlock(id=chunk['tool_id'],
                                       tool_name=chunk['tool_name'],
-                                      tool_args=chunk['shown_tool_args'],
+                                      tool_args=chunk['tool_args'],
                                       message=chunk['message'],
                                       status="start")
                     self.output_blocks.append(block)
@@ -197,7 +199,7 @@ class OutputWindow(CommonWindow):
             elif chunk.get('type') == "tool_start":
                 block = ToolBlock(id=chunk['tool_id'],
                                   tool_name=chunk['tool_name'],
-                                  tool_args=chunk['shown_tool_args'],
+                                  tool_args=chunk['tool_args'],
                                   message=chunk['message'],
                                   status="start")
                 task_block.tool_ids.add(chunk['tool_id'])
@@ -363,10 +365,8 @@ class OutputWindow(CommonWindow):
         # 主要还是对Pending中的消息进行处理
         pending_inputs = await GlobalState.get_user_input_queue().pop_all()
         if pending_inputs:
-            agent_logger.info("[User interrupt]: reset user pending to input buffer")
             self.cli.input_window.set_text("\n".join(pending_inputs))
         else:
-            agent_logger.info("[User interrupt]: clear input buffer")
             self.cli.input_window.set_text("")
         self.refresh()
 

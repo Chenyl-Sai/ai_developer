@@ -60,6 +60,7 @@ BUILTIN_GENERAL_PURPOSE: SubAgentConfig = SubAgentConfig(
 )
 
 async def scan_sub_agent_directory(directory: Path, agent_type: Literal["user", "project"]) -> list[SubAgentConfig]:
+    logger.debug(f"Scan sub agent directory {directory} and type {agent_type}")
     if not directory.exists():
         return []
     sub_agents: list[SubAgentConfig] = []
@@ -82,16 +83,16 @@ async def scan_sub_agent_directory(directory: Path, agent_type: Literal["user", 
                 agent_name=data.get("agent_name"),
                 agent_type=agent_type,
                 description=data.get("description"),
-                system_prompt=data.get("system_prompt"),
+                system_prompt=content.strip() if content.strip() else data.get("system_prompt"),
                 tools=data.get("tools"),
                 model=data.get("model"),
             ))
 
         except Exception as e:
-            logger.warning(f"Failed to parse agent file {file}:", exc_info=e)
+            logger.error(f"Failed to parse agent file {file}:", exc_info=e)
             continue
 
-    return []
+    return sub_agents
 
 
 async def load_all_sub_agents() -> dict[str, list[SubAgentConfig]]:
@@ -119,7 +120,7 @@ async def load_all_sub_agents() -> dict[str, list[SubAgentConfig]]:
             "allAgents": build_ins + users + projects
         }
     except Exception as e:
-        logger.warning("Failed to load agents, falling back to built-in:", exc_info=e)
+        logger.error("Failed to load agents, falling back to built-in:", exc_info=e)
         return {
             "activeAgents": [BUILTIN_GENERAL_PURPOSE],
             "allAgents": [BUILTIN_GENERAL_PURPOSE]
@@ -142,7 +143,7 @@ async def get_sub_agent_by_name(name: str) -> SubAgentConfig:
     agents = await get_available_sub_agents()
     return next(filter(lambda a: a.agent_name == name, agents), None)
 
-@alru_cache()
+# @alru_cache()
 async def get_agent_descriptions() -> str:
     agents = await get_available_sub_agents()
     return "\n".join(
@@ -154,7 +155,7 @@ def clear_all_cache() -> None:
     get_available_sub_agents.cache_clear()
     get_sub_agent_by_name.cache_clear()
     get_available_sub_agent_names.cache_clear()
-    get_agent_descriptions.cache_clear()
+    # get_agent_descriptions.cache_clear()
 
 file_watchers: list[Observer] = []
 

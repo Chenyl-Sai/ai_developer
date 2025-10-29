@@ -45,10 +45,10 @@ class PermissionRequest:
         elif self.tool_name in ["FileWriteTool", "FileEditTool"]:
             file_path = self.tool_args.get("file_path", "")
             if file_path:
-                # 使用相对路径作为键的一部分
                 try:
+                    # 如果是工作目录下的，则整个工具都允许
                     rel_path = Path(file_path).relative_to(self.working_directory)
-                    return f"{self.tool_name}({str(rel_path)})"
+                    return f"{self.tool_name}"
                 except ValueError:
                     # 如果路径不在工作目录内，使用绝对路径
                     return f"{self.tool_name}({file_path})"

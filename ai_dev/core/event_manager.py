@@ -12,7 +12,8 @@ from ..utils.logger import agent_logger
 class EventType(Enum):
     """事件类型枚举"""
     USER_CANCEL = "user_cancel"  # 全局中断事件
-    REFUSE_AUTH = "refuse_auth"  # 拒绝授权事件
+    TODO_UPDATED = "todo_updated"  # 待办 列表更新事件
+    SESSION_START = "session_start" # 开启新会话
 
 
 @dataclass

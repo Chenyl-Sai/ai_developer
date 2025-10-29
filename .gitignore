@@ -206,5 +206,5 @@ results/
 logs/
 
 # Others
-.ai_dev/
+.ai_dev/logs/
 .claude/

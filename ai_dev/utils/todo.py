@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from pydantic import BaseModel, Field
 
@@ -168,6 +169,12 @@ async def delete_todo_file_if_need(agent_id: str):
         file_path = get_todo_file_path(agent_id)
         if file_path.exists():
             file_path.unlink()
+
+def clean_todo_files():
+    # 项目启动的时候清楚所有的代办缓存
+    todo_dir = Path(GlobalState.get_working_directory()) / ".ai_dev" / "todos"
+    if todo_dir.exists():
+        shutil.rmtree(todo_dir)
 
 def get_todo_file_path(agent_id: str, for_write: bool = False):
     working_dir = GlobalState.get_working_directory()

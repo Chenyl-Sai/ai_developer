@@ -82,6 +82,7 @@ class ConfigManager:
             },
             "permissions": {
                 "allow": [
+                    "FileListTool",
                     "FileReadTool",
                     "GlobTool",
                     "GrepTool",

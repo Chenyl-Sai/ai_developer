@@ -24,6 +24,9 @@ dependencies = [
     "prompt_toolkit>=3.0.52",
     "watchdog>=6.0.0",
     "pyperclip>=1.11.0",
+    "langchain-mcp-adapters>=0.1.11",
+    "aiofiles>=25.1.0",
+    "mcp>=1.19.0",
 ]
 
 [project.scripts]

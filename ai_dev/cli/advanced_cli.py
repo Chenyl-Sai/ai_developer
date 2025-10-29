@@ -24,6 +24,8 @@ from ai_dev.components.choice_window import ChoiceWindow
 from ai_dev.components.input_window import InputWindow
 from ai_dev.models.model_manager import ModelManager
 from ai_dev.permission.permission_manager import PermissionManager
+from ai_dev.utils.mcp import mcp_client
+from ai_dev.utils.todo import clean_todo_files
 from ..core.assistant import AIProgrammingAssistant
 from ..core.global_state import GlobalState
 from ..core.config_manager import ConfigManager
@@ -385,16 +387,18 @@ class AdvancedCLI:
 
         # 启动事件管理器
         await event_manager.start()
-
         # 启动输出捕获
         self.output_capture.start()
-
         # 启动输出处理循环
         output_task = asyncio.create_task(self._output_processing_loop())
         # 补偿Pending消息消费循环
         compensation_pending_task = asyncio.create_task(self.output_window.compensation_pending_input_loop())
         # 开启任务执行中呼吸灯
         task_breathe_color_task = asyncio.create_task(self.output_window.task_breathe_color_controller_loop())
+        # 初始化mcp client
+        await mcp_client.initialize()
+        # 清理历史代办列表
+        clean_todo_files()
 
         try:
 
@@ -435,6 +439,7 @@ class AdvancedCLI:
 
                 def after_render(app):
                     pass
+
 
                 app = Application(
                     layout=layout,

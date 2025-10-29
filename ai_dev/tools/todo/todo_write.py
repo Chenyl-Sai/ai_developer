@@ -3,14 +3,18 @@ TodoWrite工具 - 用于创建和管理任务列表
 """
 import asyncio
 import json
+import time
 from typing import Any, Dict, List, Optional, Type, Literal, Generator, AsyncGenerator
 from uuid import uuid4
 
-from ai_dev.tools import StreamTool
+from langchain_core.callbacks import Callbacks
+from langchain_core.tools import BaseTool
+
 from pydantic import BaseModel, Field
 from ai_dev.constants.product import MAIN_AGENT_ID
-from ai_dev.tools.base import CommonToolArgs
+from ai_dev.utils.tool import CommonToolArgs
 from .prompt_cn import prompt
+from ...utils.tool import tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler
 
 
 class TodoItem(BaseModel):
@@ -26,27 +30,18 @@ class TodoWriteArgs(CommonToolArgs):
     todos: List[TodoItem] = Field(description="待办事项列表，每个对象包含content、status、priority、id字段")
 
 
-class TodoWriteTool(StreamTool):
+class TodoWriteTool(BaseTool):
     """TodoWrite工具 - 用于创建和管理任务列表"""
 
     name: str = "TodoWriteTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
 
-    @property
-    def show_name(self) -> str:
-        return "Todo"
-
-    @property
-    def is_readonly(self) -> bool:
-        return False
-
-    @property
-    def is_parallelizable(self) -> bool:
-        return False
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     args_schema: Type[BaseModel] = TodoWriteArgs
 
-    async def _execute_tool(self, todos: List[TodoItem], **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, todos: List[TodoItem], **kwargs) -> Any:
         """
         执行TodoWrite工具
 
@@ -65,19 +60,25 @@ class TodoWriteTool(StreamTool):
         agent_id = context.get("agent_id", MAIN_AGENT_ID)
 
         from ai_dev.utils.todo import set_todos, delete_todo_file_if_need
-        stored_todo_items = await set_todos(todos, agent_id)
+        stored_todo_items = asyncio.run(set_todos(todos, agent_id))
+
+        # 发布待办更新事件
+        from ai_dev.core.event_manager import event_manager, Event, EventType
+        asyncio.run(event_manager.publish(Event(
+            event_type=EventType.TODO_UPDATED,
+            data={
+                "agent_id": agent_id,
+            },
+            source="TodoWriteTool",
+            timestamp=time.time(),
+        )))
 
         result_data = self._generate_summary(stored_todo_items)
 
         # 生成响应之后，查看是否需要清理待办文件
-        asyncio.create_task(delete_todo_file_if_need(agent_id))
+        asyncio.run(delete_todo_file_if_need(agent_id))
 
-        yield {
-            "type": "tool_end",
-            "source": agent_id,
-            "result_for_llm": result_data,
-            "context": context
-        }
+        return result_data, {}
 
     def _verify_input(self, todos: list[TodoItem]):
         """
@@ -129,10 +130,3 @@ class TodoWriteTool(StreamTool):
         summary += '. Continue tracking your progress with the todo list.'
 
         return summary
-
-    def _send_tool_start_event(self):
-        return False
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        """生成成功消息"""
-        return ""

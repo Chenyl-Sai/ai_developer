@@ -3,33 +3,29 @@
 """
 
 from typing import Any, Dict, Type, Literal, Generator, AsyncGenerator
-from ai_dev.tools.base import StreamTool, CommonToolArgs
+
+from langchain_core.tools import BaseTool
+from langchain_core.callbacks import Callbacks
+
+from ai_dev.utils.tool import CommonToolArgs
 from pydantic import BaseModel, Field
-from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
+from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content, get_absolute_path
 from ai_dev.utils.patch import get_patch
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.freshness import check_freshness, update_agent_edit_time
 from .prompt_cn import prompt
+from ...utils.tool import tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler
 
 
-class FileEditTool(StreamTool):
+class FileEditTool(BaseTool):
     """文件编辑工具"""
 
     # LangChain BaseTool要求的属性
     name: str = "FileEditTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
 
-    @property
-    def show_name(self) -> str:
-        return "Edit"
-
-    @property
-    def is_readonly(self) -> bool:
-        return False
-
-    @property
-    def is_parallelizable(self) -> bool:
-        return False
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     class FileEditArgs(CommonToolArgs):
         file_path: str = Field(description="The absolute path to the file to modify")
@@ -38,9 +34,9 @@ class FileEditTool(StreamTool):
 
     args_schema: Type[BaseModel] = FileEditArgs
 
-    async def _execute_tool(self, file_path: str, old_string: str, new_string: str = None, **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, file_path: str, old_string: str, new_string: str = None, **kwargs) -> Any:
         """执行文件编辑"""
-        safe_path = self._safe_join_path(file_path)
+        safe_path = get_absolute_path(file_path)
         old_file_exists = safe_path.exists()
         enc = detect_file_encoding(str(safe_path)) if old_file_exists else "utf-8"
         endings = detect_line_endings_direct(str(safe_path), encoding=enc) if old_file_exists else "LR"
@@ -72,20 +68,14 @@ class FileEditTool(StreamTool):
             "origin_file": original_file,
             "patch": patch,
         }
-
-        yield {
-            "type": "tool_end",
-            "source": kwargs.get("context").get("agent_id"),
-            "result_for_llm": result_data,
-            "context": kwargs.get("context")
-        }
+        return result_data, {}
 
 
     def _verify_input(self, file_path: str, old_string: str, new_string: str):
         """
         校验模型入参是否符合要求
         """
-        safe_path = self._safe_join_path(file_path)
+        safe_path = get_absolute_path(file_path)
 
         # 允许文件不存在时创建新的文件，如果存在的时候做一些校验
         if safe_path.exists():
@@ -116,7 +106,7 @@ class FileEditTool(StreamTool):
         """
         对文件进行修改操作前的处理
         """
-        safe_path = self._safe_join_path(file_path)
+        safe_path = get_absolute_path(file_path)
         original_file = ""
         updated_file = ""
         if not old_string:
@@ -140,21 +130,3 @@ class FileEditTool(StreamTool):
         patch = get_patch(file_path, original_file, original_file, updated_file)
 
         return patch, original_file, updated_file
-
-    def _format_args(self, kwargs: Dict[str, Any]) -> str:
-        safe_path = self._safe_join_path(kwargs.get("file_path"))
-        relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
-        return f"{relative_path}"
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        hunks = result_for_show.get("patch")
-        total_add = 0
-        total_remove = 0
-        for hunk in hunks if hunks else []:
-            for line in hunk["lines"]:
-                if line.startswith('-'):
-                    total_remove += 1
-                elif line.startswith('+'):
-                    total_add += 1
-
-        return f"Updated {result_for_show.get('file_path')} with {total_add} additions and {total_remove} removal"

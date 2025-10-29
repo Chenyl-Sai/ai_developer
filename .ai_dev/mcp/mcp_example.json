@@ -1,0 +1,51 @@
+{
+  "mcpServers": {
+    "example-stdio": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/username/Desktop",
+        "/Users/username/Downloads"
+      ],
+      "env": {},
+      "cwd": null,
+      "encoding": "utf-8"
+    },
+    "example-sse": {
+      "transport": "sse",
+      "url": "https://mcp.amap.com/mcp/sse",
+      "headers": {},
+      "timeout": 5,
+      "sse_read_timeout": 300,
+      "httpx_client_factory": "my-pooled-client-factory",
+      "auth": {
+        "type": "basic",
+        "username": "user123",
+        "password": "password123"
+      }
+    },
+    "example-streamable-http": {
+      "transport": "streamable_http",
+      "url": "https://mcp.amap.com/mcp",
+      "headers": {},
+      "timeout": 5,
+      "sse_read_timeout": 300,
+      "terminate_on_close": false,
+      "session_kwargs": {},
+      "httpx_client_factory": "my-pooled-client-factory",
+      "auth": {
+        "type": "api_key",
+        "param_in": "url/header",
+        "param_name": "key/Authorization",
+        "api_key": "xxxx"
+      }
+    },
+    "example-websocket": {
+      "transport": "websocket",
+      "url": "https://mcp.amap.com/mcp",
+      "session_kwargs": {}
+    }
+  }
+}

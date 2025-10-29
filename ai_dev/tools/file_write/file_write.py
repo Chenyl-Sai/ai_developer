@@ -4,32 +4,29 @@
 
 from pathlib import Path
 from typing import Any, Dict, Type, Generator, AsyncGenerator
-from ai_dev.tools.base import StreamTool, CommonToolArgs
+
+from langchain_core.callbacks import Callbacks
+from langchain_core.tools import BaseTool
+
+from ai_dev.utils.tool import CommonToolArgs
 from pydantic import BaseModel, Field
-from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content
+from ai_dev.utils.file import detect_file_encoding, detect_line_endings_direct, write_text_content, get_absolute_path
 from ai_dev.utils.patch import get_patch
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.freshness import update_agent_edit_time, check_freshness
 from .prompt_cn import prompt
+from ...utils.tool import tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler
 
-class FileWriteTool(StreamTool):
+
+class FileWriteTool(BaseTool):
     """文件写入工具"""
 
     # LangChain BaseTool要求的属性
     name: str = "FileWriteTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
 
-    @property
-    def show_name(self) -> str:
-        return "Write"
-
-    @property
-    def is_readonly(self) -> bool:
-        return False
-
-    @property
-    def is_parallelizable(self) -> bool:
-        return False
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     class FileWriteArgs(CommonToolArgs):
         file_path: str = Field(description="The absolute path to the file to write (must be absolute, not relative)")
@@ -37,11 +34,11 @@ class FileWriteTool(StreamTool):
 
     args_schema: Type[BaseModel] = FileWriteArgs
 
-    async def _execute_tool(self, file_path: str, content: str, **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, file_path: str, content: str, **kwargs) -> Any:
         """执行文件写入"""
         import json
 
-        safe_path = self._safe_join_path(file_path)
+        safe_path = get_absolute_path(file_path)
         old_file_exists = safe_path.exists()
         
         # 如果文件已存在，检查是否被读取过
@@ -85,22 +82,4 @@ class FileWriteTool(StreamTool):
             "patch": patch,
         }
 
-        yield {
-            "type": "tool_end",
-            "source": kwargs.get("context").get("agent_id"),
-            "result_for_llm": result_data,
-            "context": kwargs.get("context")
-        }
-
-    def _format_args(self, kwargs: Dict[str, Any]) -> str:
-        safe_path = self._safe_join_path(kwargs.get("file_path"))
-        relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
-        return f"{relative_path}"
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        hunks = result_for_show.get("patch")
-        total_add = 0
-        for hunk in hunks if hunks else []:
-            total_add += len(hunk["lines"])
-
-        return f"Wrote <bold>{total_add}</bold> lines to <bold>{result_for_show.get('file_path')}</bold>"
+        return result_data, {}

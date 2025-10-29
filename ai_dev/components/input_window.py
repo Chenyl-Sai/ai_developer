@@ -1,10 +1,13 @@
 import asyncio
+import time
 
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from ai_dev.components.common_window import CommonWindow
 from prompt_toolkit.widgets import TextArea
 from wcwidth import wcwidth
+
+from ai_dev.core.event_manager import event_manager, Event, EventType
 
 
 class AutoResizeTextArea(TextArea):
@@ -62,6 +65,15 @@ class InputWindow(CommonWindow):
             if input_type == "Input":
                 # 调度异步任务
                 asyncio.create_task(self.cli.process_stream_input(text))
+                # 发送session 启动通知
+                await event_manager.publish(Event(
+                    event_type=EventType.SESSION_START,
+                    data={
+                        "user_input": text,
+                    },
+                    source="InputWindow",
+                    timestamp=time.time()
+                ))
 
     def get_input_kb(self):
         return self.input_kb

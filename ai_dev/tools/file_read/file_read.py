@@ -2,21 +2,32 @@
 文件读取工具
 """
 
-from typing import Any, Dict, Type, AsyncGenerator
-from ai_dev.tools.base import StreamTool, CommonToolArgs
+from typing import Any, Dict, Type
+
+from langchain_core.tools import BaseTool
+
+from ai_dev.utils.tool import CommonToolArgs
 from pydantic import BaseModel, Field
+from langchain_core.callbacks import Callbacks
 
 from ai_dev.core.global_state import GlobalState
 from ai_dev.utils.freshness import update_read_time
 from .prompt_cn import prompt
 from .constant import MAX_LINE_LENGTH, MAX_LINES_TO_READ
+from ...utils.file import get_absolute_path
+from ...utils.tool import tool_start_callback_handler, tool_error_callback_handler, tool_end_callback_handler
 
-class FileReadTool(StreamTool):
+
+class FileReadTool(BaseTool):
     """文件读取工具"""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
     # LangChain BaseTool要求的属性
     name: str = "FileReadTool"
     description: str = prompt
+    response_format: str = "content_and_artifact"
 
     class FileReadArgs(CommonToolArgs):
         file_path: str = Field(description="The absolute path to the file to read")
@@ -25,17 +36,15 @@ class FileReadTool(StreamTool):
 
     args_schema: Type[BaseModel] = FileReadArgs
 
-    @property
-    def show_name(self) -> str:
-        return "Read"
+    callbacks: Callbacks = [tool_start_callback_handler, tool_end_callback_handler, tool_error_callback_handler]
 
     @property
-    def is_readonly(self) -> bool:
+    def is_parallelizable(self) -> bool:
         return True
 
-    async def _execute_tool(self, file_path: str, offset: int = 1, limit: int = None, **kwargs) -> AsyncGenerator[dict, None]:
+    def _run(self, file_path: str, offset: int = 1, limit: int = None, **kwargs) -> Any:
         """执行文件读取"""
-        safe_path = self._safe_join_path(file_path)
+        safe_path = get_absolute_path(file_path)
 
         if not safe_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
@@ -83,27 +92,4 @@ class FileReadTool(StreamTool):
             "line_count": len(selected_lines),
             "total_lines": total_lines
         }
-
-        yield {
-            "type": "tool_end",
-            "source": kwargs.get("context").get("agent_id"),
-            "result_for_llm": result_data,
-            "context": kwargs.get("context")
-        }
-
-    def _format_args(self, kwargs: Dict[str, Any]) -> str:
-        safe_path = self._safe_join_path(kwargs.get("file_path"))
-        relative_path = str(safe_path.relative_to(GlobalState.get_working_directory()))
-        return f"{relative_path}"
-
-    def _get_success_message(self, result_for_show: Any) -> str:
-        """生成文件读取的成功消息"""
-        line_count = result_for_show.get("line_count", 0)
-        total_lines = result_for_show.get("total_lines", 0)
-        start_line = result_for_show.get("start_line", 1)
-
-        if line_count == total_lines:
-            return f"Read <b>{line_count}</b> lines"
-        else:
-            end_line = start_line + line_count - 1
-            return f"Read <b>{line_count}</b> lines (lines {start_line}-{end_line} of {total_lines})"
+        return result_data, {}

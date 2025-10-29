@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "read-website-fast": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@just-every/mcp-read-website-fast"]
+    },
+    "sequential-thinking": {
+      "transport": "stdio",
+      "command": "npx",
+      "args":[
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    }
+  }
+}
