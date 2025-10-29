@@ -174,7 +174,12 @@ class OutputWindow(CommonWindow):
         else:
             # 子任务的输出
             # 找到那个任务
-            task_block = self.task_block_dict.get("task_" + chunk.get("source"))
+            source = chunk.get("source")
+            if source is None:
+                agent_logger.warning(f"Chunk missing 'source' field: {chunk}")
+                return
+
+            task_block = self.task_block_dict.get("task_" + source)
             # 如果没有找到哪个task就丢了
             if not task_block:
                 agent_logger.warning(f"Chunk does not fount its parent task block: {chunk}")

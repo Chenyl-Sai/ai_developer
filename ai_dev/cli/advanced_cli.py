@@ -289,11 +289,10 @@ class AdvancedCLI:
 
         agent_logger.log_agent_start(MAIN_AGENT_ID, user_input_or_resume)
 
-        try:
-
-            async for chunk in self.assistant.process_input_stream(user_input_or_resume,
-                                                                   thread_id=self.thread_id,
-                                                                   resume_task_ids=resume_task_ids):
+        async for chunk in self.assistant.process_input_stream(user_input_or_resume,
+                                                               thread_id=self.thread_id,
+                                                               resume_task_ids=resume_task_ids):
+            try:
                 # 中断
                 if "_is_interrupt_" in chunk and chunk["_is_interrupt_"] == True:
                     await self.choice_window.append_interruption(chunk.get("interrupt_info"))
@@ -318,13 +317,13 @@ class AdvancedCLI:
                 else:
                     await self.output_window.add_stream_output(chunk)
 
-
-        except Exception as e:
-            await self.output_window.add_common_block("class:error", f"处理流时出错: {str(e)}")
-            agent_logger.log_agent_error(MAIN_AGENT_ID, str(e), e, {
-                "user_input": user_input_or_resume,
-                "stage": "stream_processing"
-            })
+            except Exception as e:
+                await self.output_window.add_common_block("class:error", f"处理chunk时出错: {str(e)}")
+                agent_logger.log_agent_error(MAIN_AGENT_ID, str(e), e, {
+                    "user_input": user_input_or_resume,
+                    "stage": "chunk_processing",
+                    "chunk": chunk
+                })
 
     def re_construct_layout(self):
         """根据状态重新构建layout内组件"""
