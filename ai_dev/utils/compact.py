@@ -12,7 +12,7 @@ INTERRUPT_MESSAGE_FOR_TOOL_USE = "[Request interrupted by user for tool use]"
 
 AUTO_COMPACT_THRESHOLD_RATIO = 0.92
 
-async def check_auto_compact(messages: list[AnyMessage]) -> tuple[list[AnyMessage], bool]:
+async def check_auto_compact(messages: list[AnyMessage], agent_id: str) -> tuple[list[AnyMessage], bool]:
     """检查是否需要压缩，如果需要则自动压缩"""
     if not should_compact(messages):
         return messages, False
@@ -21,10 +21,12 @@ async def check_auto_compact(messages: list[AnyMessage]) -> tuple[list[AnyMessag
     message_id = "compact_" + str(uuid.uuid4())
     writer({
         "type": "message_start",
+        "source": agent_id,
         "message_id": message_id
     })
     writer({
         "type": "message_delta",
+        "source": agent_id,
         "message_id": message_id,
         "delta": "The context exceeds the threshold and compression begins…\n\n",
     })
@@ -38,11 +40,13 @@ async def check_auto_compact(messages: list[AnyMessage]) -> tuple[list[AnyMessag
     agent_logger.info(f"Compact message finished, tokens: {count_tokens([ai_message])}")
     writer({
         "type": "message_delta",
+        "source": agent_id,
         "message_id": message_id,
         "delta": "Context compression completed\n",
     })
     writer({
         "type": "message_end",
+        "source": agent_id,
         "message_id": message_id
     })
     return [

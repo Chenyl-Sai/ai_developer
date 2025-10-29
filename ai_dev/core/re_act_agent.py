@@ -169,7 +169,7 @@ class ReActAgent:
 
         messages = state.messages
         # 对消息进行压缩
-        processed_messages, compacted = await check_auto_compact(messages)
+        processed_messages, compacted = await check_auto_compact(messages, state.agent_id)
         if compacted:
             messages = processed_messages
 

@@ -444,7 +444,7 @@ class AdvancedCLI:
                 app = Application(
                     layout=layout,
                     key_bindings=merge_key_bindings([self.normal_kb, self.input_window.get_input_kb()]),
-                    full_screen=False,
+                    full_screen=True,
                     mouse_support=True,
                     style=style,
                     # 使用真实的终端输出（不受重定向影响）
