@@ -194,7 +194,8 @@ class OutputWindow(CommonWindow):
                 block = task_block.process_block_dict.get("message_" + chunk['message_id'])
                 if block:
                     block.content += chunk['delta']
-                    self._token_count = chunk['estimate_tokens']
+                    if 'estimate_tokens' in chunk:
+                        self._token_count = chunk['estimate_tokens']
             elif chunk.get('type') == "message_end":
                 block = task_block.process_block_dict.get("message_" + chunk['message_id'])
                 if block:

@@ -656,7 +656,7 @@ def _format_show_tool_args(block: ToolBlock) -> str:
         if block.tool_args:
             for key, value in block.tool_args.items():
                 if key not in ["context"]:
-                    text += f" {key} : {value}\n"
+                    text += f", {key} : {value}"
         return text
 
 def _format_show_tool_summary(block: ToolBlock) -> str:
